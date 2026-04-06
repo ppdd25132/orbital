@@ -380,7 +380,9 @@ function SettingsView({accounts,clients,prefs,setPrefs}){
           </div>
         </Section>
 
-        <button className="flex items-center gap-2 text-[13px] text-blue-400 hover:text-blue-300 px-4 py-3 rounded-lg border border-dashed border-[#2a2d35] hover:border-blue-500/30 w-full justify-center transition-colors">
+        <button
+          onClick={() => { window.location.href = "/api/auth/signin/google?callbackUrl=/"; }}
+          className="flex items-center gap-2 text-[13px] text-blue-400 hover:text-blue-300 px-4 py-3 rounded-lg border border-dashed border-[#2a2d35] hover:border-blue-500/30 w-full justify-center transition-colors">
           <Plus size={15}/> Connect another account
         </button>
       </div>
