@@ -1,4 +1,5 @@
 import "./globals.css";
+import Providers from "./providers";
 
 export const metadata = {
   title: "Orbital — All your accounts. One inbox.",
@@ -8,7 +9,9 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className="bg-[#0f1117]">{children}</body>
+      <body className="bg-[#0f1117]">
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

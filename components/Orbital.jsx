@@ -1,11 +1,12 @@
 "use client";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useSession, signIn, signOut } from "next-auth/react";
 import {
   Mail, CheckCircle2, Send, RefreshCw, Edit3, Plus,
   Sparkles, Zap, Inbox, Hash, Eye, PenLine, Loader2, Building2,
   Link2, X, Check, Clock, Search,
   ArrowRight, Shield, Star, Archive, Settings, Keyboard,
-  CornerDownRight
+  CornerDownRight, AlertCircle
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -112,6 +113,67 @@ const DEMO_THREADS=[
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   GMAIL DATA HELPERS
+   ═══════════════════════════════════════════════════════════════════════════ */
+function mapGmailToThreads(messages) {
+  const byThread = {};
+  for (const m of messages) {
+    const tid = m.threadId || m.id;
+    if (!byThread[tid]) byThread[tid] = [];
+    byThread[tid].push(m);
+  }
+  return Object.entries(byThread).map(([tid, msgs]) => {
+    msgs.sort((a, b) => new Date(a.date) - new Date(b.date));
+    const last = msgs[msgs.length - 1];
+    const participantSet = new Map();
+    for (const m of msgs) {
+      const name = m.from?.split("<")[0]?.trim().replace(/"/g, "") || m.from || "Unknown";
+      const email = m.from?.match(/<(.+?)>/)?.[1] || m.from || "";
+      if (!participantSet.has(email)) participantSet.set(email, { name, email, role: "" });
+    }
+    const elapsed = Date.now() - new Date(last.date).getTime();
+    const lastActivity = elapsed < 3600000 ? `${Math.round(elapsed / 60000)}m ago`
+      : elapsed < 86400000 ? `${Math.round(elapsed / 3600000)}h ago`
+      : `${Math.round(elapsed / 86400000)}d ago`;
+    return {
+      id: tid,
+      clientId: "cl-gmail",
+      accountId: "gmail-real",
+      subject: last.subject || "(no subject)",
+      status: "needs_response",
+      starred: false,
+      lastActivity,
+      lastActivityTs: new Date(last.date).getTime(),
+      preview: last.snippet || "",
+      participants: Array.from(participantSet.values()),
+      messages: msgs.map(m => ({
+        id: m.id,
+        from: {
+          name: m.from?.split("<")[0]?.trim().replace(/"/g, "") || m.from || "Unknown",
+          email: m.from?.match(/<(.+?)>/)?.[1] || m.from || "",
+        },
+        channel: "email",
+        time: new Date(m.date).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+        body: m.body || m.snippet || "",
+      })),
+    };
+  });
+}
+
+async function sendGmailMessage({ to, subject, body, replyToMessageId }) {
+  const res = await fetch("/api/gmail/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to, subject, body, replyToMessageId }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Send failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    AI DRAFT
    ═══════════════════════════════════════════════════════════════════════════ */
 async function generateDraft(thread,client){
@@ -191,8 +253,9 @@ function Onboarding({onComplete}){
             <Feature icon={Sparkles} text="AI reads conversation history to draft replies"/>
             <Feature icon={Shield} text="Always sends from the correct identity"/>
           </div>
-          <div className="flex gap-3">
-            <Btn primary onClick={()=>setStep(1)}>Get started <ArrowRight size={15}/></Btn>
+          <div className="flex gap-3 flex-wrap">
+            <Btn primary onClick={()=>signIn("google")}>Sign in with Google</Btn>
+            <Btn onClick={()=>setStep(1)}>Get started manually <ArrowRight size={15}/></Btn>
             <Btn onClick={()=>onComplete({accounts:DEMO_ACCOUNTS,clients:DEMO_CLIENTS,threads:DEMO_THREADS})}>Load demo</Btn>
           </div>
         </div>}
@@ -201,8 +264,9 @@ function Onboarding({onComplete}){
           <span className="text-[11px] text-blue-400 font-semibold uppercase tracking-wider">Step 1 of 3</span>
           <h2 className="text-xl font-bold text-[#f3f4f6] mb-1 mt-1">Connect your accounts</h2>
           <p className="text-[14px] text-[#6b7280] mb-5">Add every email and Slack workspace you use across all clients.</p>
-          <div className="flex gap-3 mb-5">
-            <Btn onClick={()=>addAcc("gmail")} disabled={!!connecting}>{connecting==="gmail"?<Loader2 size={14} className="animate-spin"/>:<Mail size={14}/>}{connecting==="gmail"?"Connecting...":"Add Gmail"}</Btn>
+          <div className="flex gap-3 mb-5 flex-wrap">
+            <Btn onClick={()=>signIn("google")}><Mail size={14}/> Connect Gmail (Google)</Btn>
+            <Btn onClick={()=>addAcc("gmail")} disabled={!!connecting}>{connecting==="gmail"?<Loader2 size={14} className="animate-spin"/>:<Mail size={14}/>}{connecting==="gmail"?"Connecting...":"Add Gmail (demo)"}</Btn>
             <Btn onClick={()=>addAcc("slack")} disabled={!!connecting}>{connecting==="slack"?<Loader2 size={14} className="animate-spin"/>:<Hash size={14}/>}{connecting==="slack"?"Connecting...":"Add Slack"}</Btn>
           </div>
           {accounts.length>0&&<div className="space-y-2 mb-5">{accounts.map(a=>(<div key={a.id} className="flex items-center gap-3 p-3 rounded-lg border border-[#2a2d35] bg-[#1a1d23] anim-fade">
@@ -334,7 +398,7 @@ function ShortcutsModal({onClose}){
 /* ═══════════════════════════════════════════════════════════════════════════
    SETTINGS VIEW
    ═══════════════════════════════════════════════════════════════════════════ */
-function SettingsView({accounts,clients,prefs,setPrefs}){
+function SettingsView({accounts,clients,prefs,setPrefs,session}){
   const gmail=accounts.filter(a=>a.type==="gmail"), slack=accounts.filter(a=>a.type==="slack");
   const Section=({icon:I,title,children})=>(<div className="mb-8"><div className="flex items-center gap-2 mb-3"><I size={14} className="text-[#6b7280]"/><h3 className="text-[13px] font-semibold text-[#9ca3af] uppercase tracking-wider">{title}</h3></div>{children}</div>);
   const Toggle=({label,value,onChange})=>(<div className="flex items-center justify-between py-2.5"><span className="text-[13px] text-[#d1d5db]">{label}</span>
@@ -380,7 +444,26 @@ function SettingsView({accounts,clients,prefs,setPrefs}){
           </div>
         </Section>
 
-        <button className="flex items-center gap-2 text-[13px] text-blue-400 hover:text-blue-300 px-4 py-3 rounded-lg border border-dashed border-[#2a2d35] hover:border-blue-500/30 w-full justify-center transition-colors">
+        {session?.user?(
+          <div className="mb-8 p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white text-[11px] font-bold">
+                {session.user.name?.split(" ").map(w=>w[0]).join("").slice(0,2)||"G"}
+              </div>
+              <div className="flex-1">
+                <div className="text-[13px] text-[#e5e7eb] font-medium">{session.user.email}</div>
+                <div className="text-[11px] text-emerald-400 flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>Connected via Google OAuth</div>
+              </div>
+              <button onClick={()=>signOut()} className="text-[11px] text-[#6b7280] hover:text-red-400 transition-colors">Sign out</button>
+            </div>
+          </div>
+        ):(
+          <button onClick={()=>signIn("google")} className="flex items-center gap-2 text-[13px] text-blue-400 hover:text-blue-300 px-4 py-3 rounded-lg border border-dashed border-[#2a2d35] hover:border-blue-500/30 w-full justify-center transition-colors mb-8">
+            <Mail size={15}/> Connect Gmail with Google
+          </button>
+        )}
+
+        <button onClick={()=>{window.location.href="/api/auth/signin";}} className="flex items-center gap-2 text-[13px] text-blue-400 hover:text-blue-300 px-4 py-3 rounded-lg border border-dashed border-[#2a2d35] hover:border-blue-500/30 w-full justify-center transition-colors">
           <Plus size={15}/> Connect another account
         </button>
       </div>
@@ -391,7 +474,7 @@ function SettingsView({accounts,clients,prefs,setPrefs}){
 /* ═══════════════════════════════════════════════════════════════════════════
    THREAD DETAIL
    ═══════════════════════════════════════════════════════════════════════════ */
-function ThreadDetail({thread,client,accounts,onUpdate,prefs}){
+function ThreadDetail({thread,client,accounts,onUpdate,prefs,isAuthed}){
   const [draft,setDraft]=useState("");
   const [gen,setGen]=useState("idle");
   const [editing,setEditing]=useState(false);
@@ -420,8 +503,14 @@ function ThreadDetail({thread,client,accounts,onUpdate,prefs}){
     document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[statusMenu]);
 
   const [sending,setSending]=useState(false);
-  const sendMsg=(text)=>{
+  const sendMsg=async(text)=>{
     if(sending||!text.trim())return;setSending(true);
+    if(isAuthed){
+      try{
+        const recipient=last.from.email||thread.participants[0]?.email||"";
+        await sendGmailMessage({to:recipient,subject:`Re: ${thread.subject}`,body:text,replyToMessageId:last.id});
+      }catch(e){console.error("Gmail send failed:",e);setSending(false);return;}
+    }
     const nm={id:`ms${Date.now()}`,from:{name:"You",email:sendAcc?.address},channel:last.channel,time:"Just now",body:text};
     onUpdate(thread.id,{...thread,status:"resolved",messages:[...thread.messages,nm],lastActivity:"Just now",lastActivityTs:Date.now(),preview:text.slice(0,120)+"..."});
     setGen("sent");setEditing(false);setShowManual(false);setManualReply("");
@@ -546,6 +635,7 @@ function ThreadDetail({thread,client,accounts,onUpdate,prefs}){
    APP
    ═══════════════════════════════════════════════════════════════════════════ */
 export default function Orbital(){
+  const { data: session, status: sessionStatus } = useSession();
   const [loaded,setLoaded]=useState(false);
   const [boarded,setBoarded]=useState(false);
   const [accounts,setAccounts]=useState([]);
@@ -558,11 +648,41 @@ export default function Orbital(){
   const [compose,setCompose]=useState(false);
   const [shortcuts,setShortcuts]=useState(false);
   const [prefs,setPrefs]=useState({autoDraft:true,useHistory:true,shortcuts:true,showArchived:false});
+  const [gmailLoading,setGmailLoading]=useState(false);
+  const [gmailError,setGmailError]=useState(null);
+  const isAuthed=sessionStatus==="authenticated"&&!!session?.access_token;
 
-  // Load persisted state
-  useEffect(()=>{(async()=>{const s=await loadState();
+  const fetchGmail=useCallback(async()=>{
+    if(!isAuthed)return;
+    setGmailLoading(true);setGmailError(null);
+    try{
+      const res=await fetch("/api/gmail/messages?maxResults=30");
+      if(!res.ok)throw new Error(`Failed to fetch emails (${res.status})`);
+      const data=await res.json();
+      if(data.error)throw new Error(data.error);
+      const mapped=mapGmailToThreads(data.messages||[]);
+      setThreads(mapped);
+    }catch(e){setGmailError(e.message);}
+    finally{setGmailLoading(false);}
+  },[isAuthed]);
+
+  // Load persisted state (demo mode — skip if authenticated)
+  useEffect(()=>{(async()=>{
+    if(isAuthed){setLoaded(true);return;}
+    const s=await loadState();
     if(s&&s.boarded){setAccounts(s.accounts||[]);setClients(s.clients||[]);setThreads(s.threads||[]);setPrefs(s.prefs||prefs);setBoarded(true);}
-    setLoaded(true);})();},[]);
+    setLoaded(true);})();},[isAuthed]);
+
+  // Auto-board and fetch when authenticated via Google OAuth
+  useEffect(()=>{
+    if(isAuthed&&session?.user&&loaded){
+      const email=session.user.email||"connected@gmail.com";
+      setAccounts([{id:"gmail-real",type:"gmail",address:email,label:"Gmail",color:"#3B82F6"}]);
+      setClients([{id:"cl-gmail",name:"Gmail",accounts:["gmail-real"],color:"#3B82F6",initials:"GM"}]);
+      setBoarded(true);
+      fetchGmail();
+    }
+  },[isAuthed,loaded,fetchGmail]);
 
   // Save state on changes
   useEffect(()=>{if(boarded)saveState({boarded,accounts,clients,threads,prefs});},[boarded,accounts,clients,threads,prefs]);
@@ -615,7 +735,10 @@ export default function Orbital(){
 
   const handleOnboard=(data)=>{setAccounts(data.accounts);setClients(data.clients);setThreads(data.threads);setBoarded(true);};
 
-  const handleComposeSend=({accountId,to,subject,body,clientId,channel})=>{
+  const handleComposeSend=async({accountId,to,subject,body,clientId,channel})=>{
+    if(isAuthed&&channel==="email"){
+      try{await sendGmailMessage({to,subject,body});}catch(e){console.error("Gmail send failed:",e);return;}
+    }
     const id=`ct${Date.now()}`;
     setThreads(p=>[{id,clientId:clientId||"unknown",accountId,subject:subject||`Message to ${to}`,status:"resolved",starred:false,
       lastActivity:"Just now",lastActivityTs:Date.now(),preview:body.slice(0,120)+"...",
@@ -629,7 +752,9 @@ export default function Orbital(){
     setActiveId(null);setFilter("needs_response");setSearch("");setView("inbox");setCompose(false);setShortcuts(false);
     setPrefs({autoDraft:true,useHistory:true,shortcuts:true,showArchived:false});};
 
-  if(!loaded)return <div className="h-screen bg-[#07080b] flex items-center justify-center"><Loader2 size={24} className="text-blue-500 animate-spin"/></div>;
+  if(!loaded||sessionStatus==="loading")return <div className="h-screen bg-[#07080b] flex items-center justify-center"><Loader2 size={24} className="text-blue-500 animate-spin"/></div>;
+  if(isAuthed&&gmailLoading&&threads.length===0)return <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-3"><Loader2 size={24} className="text-blue-500 animate-spin"/><span className="text-[13px] text-[#6b7280]">Loading your emails...</span></div>;
+  if(isAuthed&&gmailError&&threads.length===0)return <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-3"><AlertCircle size={24} className="text-red-400"/><span className="text-[13px] text-red-400">{gmailError}</span><Btn sm onClick={fetchGmail}><RefreshCw size={13}/> Retry</Btn></div>;
   if(!boarded)return <Onboarding onComplete={handleOnboard}/>;
 
   return(
@@ -650,7 +775,13 @@ export default function Orbital(){
         </nav>
         <div className="flex flex-col items-center gap-2">
           <button onClick={()=>setShortcuts(true)} title="Shortcuts (?)" className="w-8 h-8 rounded-lg flex items-center justify-center text-[#4b5563] hover:text-[#9ca3af] hover:bg-[#1a1d23]/50 transition-colors"><Keyboard size={16}/></button>
-          <button onClick={handleReset} title="Reset" className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white hover:opacity-80 transition-opacity">MT</button>
+          {session?.user?(
+            <button onClick={()=>signOut()} title={`Signed in as ${session.user.email}\nClick to sign out`} className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-600 to-blue-600 flex items-center justify-center text-[10px] font-bold text-white hover:opacity-80 transition-opacity">
+              {session.user.name?.split(" ").map(w=>w[0]).join("").slice(0,2)||"G"}
+            </button>
+          ):(
+            <button onClick={handleReset} title="Reset" className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white hover:opacity-80 transition-opacity">MT</button>
+          )}
         </div>
       </div>
 
@@ -679,10 +810,18 @@ export default function Orbital(){
                   <div className="w-1.5 h-1.5 rounded-full" style={{backgroundColor:c.color}}/>{c.name}
                 </button>))}
             </div>
+            {isAuthed&&<div className="flex items-center gap-2 mt-2">
+              <button onClick={fetchGmail} disabled={gmailLoading} className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50"><RefreshCw size={11} className={gmailLoading?"animate-spin":""}/> Refresh</button>
+              {gmailError&&<span className="text-[11px] text-red-400 flex items-center gap-1"><AlertCircle size={11}/>{gmailError}</span>}
+            </div>}
           </div>
           <div className="flex-1 overflow-y-auto">
             {visibleThreads.length===0?(
-              <div className="text-center py-16 px-6"><CheckCircle2 size={28} className="mx-auto mb-3 text-emerald-500/40"/><p className="text-sm text-[#6b7280]">{search?"No threads match.":threads.length===0?"No messages yet.":"All caught up!"}</p></div>
+              <div className="text-center py-16 px-6">
+            <CheckCircle2 size={28} className="mx-auto mb-3 text-emerald-500/40"/>
+            <p className="text-sm text-[#6b7280]">{search?"No threads match.":threads.length===0?"No messages yet.":"All caught up!"}</p>
+            {threads.length===0&&gmailLoading&&<p className="text-[11px] text-blue-400 mt-2 flex items-center justify-center gap-1.5"><Loader2 size={11} className="animate-spin"/>Loading Gmail messages...</p>}
+          </div>
             ):visibleThreads.map(thread=>{const cl=clients.find(c=>c.id===thread.clientId);const last=thread.messages[thread.messages.length-1];const unread=thread.status==="needs_response";
               return(<button key={thread.id} onClick={()=>setActiveId(thread.id)}
                 className={`w-full text-left px-4 py-3.5 border-b border-[#1a1d23] transition-all ${activeId===thread.id?"bg-[#1a1d23]":"hover:bg-[#12141a]"}`}>
@@ -709,7 +848,7 @@ export default function Orbital(){
 
         {/* Detail or empty */}
         {activeThread&&activeClient?(
-          <ThreadDetail key={activeThread.id} thread={activeThread} client={activeClient} accounts={accounts} onUpdate={updateThread} prefs={prefs}/>
+          <ThreadDetail key={activeThread.id} thread={activeThread} client={activeClient} accounts={accounts} onUpdate={updateThread} prefs={prefs} isAuthed={isAuthed}/>
         ):(
           <div className="flex-1 flex items-center justify-center bg-[#0a0c10]">
             <div className="text-center">
@@ -720,7 +859,7 @@ export default function Orbital(){
           </div>
         )}
       </>):(
-        <SettingsView accounts={accounts} clients={clients} prefs={prefs} setPrefs={setPrefs}/>
+        <SettingsView accounts={accounts} clients={clients} prefs={prefs} setPrefs={setPrefs} session={session}/>
       )}
     </div>
   );
