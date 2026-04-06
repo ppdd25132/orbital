@@ -652,7 +652,7 @@ export default function Orbital(){
   const [prefs,setPrefs]=useState({autoDraft:true,useHistory:true,shortcuts:true,showArchived:false});
   const [gmailLoading,setGmailLoading]=useState(false);
   const [gmailError,setGmailError]=useState(null);
-  const isAuthed=sessionStatus==="authenticated"&&!!session?.access_token;
+  const isAuthed=sessionStatus==="authenticated"&&!!session?.access_token&&session?.error!=="RefreshAccessTokenError";
 
   const fetchGmail=useCallback(async()=>{
     if(!isAuthed)return;
@@ -755,6 +755,7 @@ export default function Orbital(){
     setPrefs({autoDraft:true,useHistory:true,shortcuts:true,showArchived:false});};
 
   if(!loaded||sessionStatus==="loading")return <div className="h-screen bg-[#07080b] flex items-center justify-center"><Loader2 size={24} className="text-blue-500 animate-spin"/></div>;
+  if(sessionStatus==="authenticated"&&session?.error==="RefreshAccessTokenError")return <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-3"><AlertCircle size={24} className="text-amber-400"/><span className="text-[13px] text-[#e5e7eb]">Your session has expired.</span><Btn sm primary onClick={()=>signIn("google")}><RefreshCw size={13}/> Sign in again</Btn></div>;
   if(isAuthed&&gmailLoading&&threads.length===0)return <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-3"><Loader2 size={24} className="text-blue-500 animate-spin"/><span className="text-[13px] text-[#6b7280]">Loading your emails...</span></div>;
   if(isAuthed&&gmailError&&threads.length===0)return <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-3"><AlertCircle size={24} className="text-red-400"/><span className="text-[13px] text-red-400">{gmailError}</span><Btn sm onClick={fetchGmail}><RefreshCw size={13}/> Retry</Btn></div>;
   if(!boarded)return <Onboarding onComplete={handleOnboard}/>;
