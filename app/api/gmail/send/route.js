@@ -47,6 +47,9 @@ export async function POST(request) {
     return Response.json({ message: result });
   } catch (err) {
     console.error('Gmail sendMessage error:', err);
-    return Response.json({ error: 'Failed to send message' }, { status: 500 });
+    const message = err?.message || 'Failed to send message';
+    const status = typeof err?.status === 'number' ? err.status
+      : typeof err?.code === 'number' ? err.code : 500;
+    return Response.json({ error: message }, { status });
   }
 }

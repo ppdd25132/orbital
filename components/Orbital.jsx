@@ -145,6 +145,33 @@ const DEMO_THREADS = [
 /* ═══════════════════════════════════════════════════════════════════
    HELPERS
    ═══════════════════════════════════════════════════════════════════ */
+
+// Decode common HTML entities (works in both SSR and browser, no hydration mismatch)
+function decodeHTMLEntities(str) {
+  if (!str) return "";
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+// Strip HTML tags and decode entities — for rendering email body as plain text
+function stripHtmlAndDecode(str) {
+  if (!str) return "";
+  return decodeHTMLEntities(
+    str
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+  ).trim();
+}
+
 function initials(name = "") {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
@@ -178,7 +205,7 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
       subject: last.subject || "(no subject)",
       status: "needs_response", starred: false,
       lastActivity, lastActivityTs: new Date(last.date).getTime(),
-      preview: last.snippet || "",
+      preview: decodeHTMLEntities(last.snippet || ""),
       participants: Array.from(participantSet.values()),
       messages: msgs.map(m => ({
         id: m.id,
@@ -189,7 +216,7 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
         time: new Date(m.date).toLocaleDateString("en-US", {
           month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
         }),
-        body: m.body || m.snippet || "",
+        body: stripHtmlAndDecode(m.body || m.snippet || ""),
       })),
     };
   });
@@ -1291,6 +1318,34 @@ export default function Orbital() {
   function handleSelect(id) {
     setActiveId(id);
     setMobilePanel("detail");
+
+    // Fetch full thread content for real Gmail threads (inbox fetch only has snippets)
+    if (!isDemo) {
+      const thread = threads.find(t => t.id === id);
+      if (thread && !thread._fullLoaded) {
+        fetch(`/api/gmail/threads/${id}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (!data?.thread?.messages?.length) return;
+            const fullMsgs = data.thread.messages.map(m => {
+              const fromStr = m.from || "";
+              return {
+                id: m.id,
+                from: {
+                  name: fromStr.split("<")[0].trim().replace(/"/g, "") || fromStr || "Unknown",
+                  email: fromStr.match(/<(.+?)>/)?.[1] || fromStr || "",
+                },
+                time: m.internalDate
+                  ? new Date(parseInt(m.internalDate)).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+                  : m.date || "",
+                body: stripHtmlAndDecode(m.body || m.snippet || ""),
+              };
+            });
+            setThreads(ts => ts.map(t => t.id === id ? { ...t, messages: fullMsgs, _fullLoaded: true } : t));
+          })
+          .catch(err => console.error("Thread fetch error:", err));
+      }
+    }
   }
 
   function handleStatusChange(id, status) {
