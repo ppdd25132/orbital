@@ -490,6 +490,33 @@ function ThreadDetail({thread,client,accounts,onUpdate,prefs,isAuthed}){
   const last=thread.messages[thread.messages.length-1];
   const sendAcc=accounts.find(a=>a.id===thread.accountId);
 
+  // Fetch full thread content for real Gmail threads (messages from /messages route only have snippets)
+  useEffect(()=>{
+    if(!isAuthed||thread._fullLoaded)return;
+    fetch(`/api/gmail/threads/${thread.id}`)
+      .then(r=>r.ok?r.json():null)
+      .then(data=>{
+        if(!data?.thread?.messages?.length)return;
+        const fullMsgs=data.thread.messages.map(m=>{
+          const fromStr=m.from||"";
+          return{
+            id:m.id,
+            from:{
+              name:fromStr.split("<")[0].trim().replace(/"/g,"")||fromStr||"Unknown",
+              email:fromStr.match(/<(.+?)>/)?.[1]||fromStr||"",
+            },
+            channel:"email",
+            time:m.internalDate
+              ?new Date(parseInt(m.internalDate)).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})
+              :m.date||"",
+            body:m.body||m.snippet||"",
+          };
+        });
+        onUpdate(thread.id,{...thread,messages:fullMsgs,_fullLoaded:true});
+      })
+      .catch(err=>console.error("Thread fetch error:",err));
+  },[thread.id,isAuthed]);
+
   const generate=useCallback(async()=>{setGen("generating");setDraft("");setShowManual(false);
     const r=await generateDraft(thread,client);setDraft(r);setGen("ready");setEditing(true);},[thread,client]);
 
@@ -652,7 +679,8 @@ export default function Orbital(){
   const [prefs,setPrefs]=useState({autoDraft:true,useHistory:true,shortcuts:true,showArchived:false});
   const [gmailLoading,setGmailLoading]=useState(false);
   const [gmailError,setGmailError]=useState(null);
-  const isAuthed=sessionStatus==="authenticated"&&!!session?.access_token;
+  const tokenError=session?.error==="RefreshAccessTokenError";
+  const isAuthed=sessionStatus==="authenticated"&&!!session?.access_token&&!tokenError;
 
   const fetchGmail=useCallback(async()=>{
     if(!isAuthed)return;
@@ -755,6 +783,16 @@ export default function Orbital(){
     setPrefs({autoDraft:true,useHistory:true,shortcuts:true,showArchived:false});};
 
   if(!loaded||sessionStatus==="loading")return <div className="h-screen bg-[#07080b] flex items-center justify-center"><Loader2 size={24} className="text-blue-500 animate-spin"/></div>;
+  if(tokenError)return(
+    <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-4">
+      <AlertCircle size={28} className="text-amber-400"/>
+      <div className="text-center">
+        <p className="text-[15px] font-medium text-[#e5e7eb] mb-1">Session expired</p>
+        <p className="text-[13px] text-[#6b7280] mb-4">Your Google session has expired. Please sign in again.</p>
+      </div>
+      <Btn primary onClick={()=>signIn("google")}><Mail size={14}/> Sign in again</Btn>
+    </div>
+  );
   if(isAuthed&&gmailLoading&&threads.length===0)return <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-3"><Loader2 size={24} className="text-blue-500 animate-spin"/><span className="text-[13px] text-[#6b7280]">Loading your emails...</span></div>;
   if(isAuthed&&gmailError&&threads.length===0)return <div className="h-screen bg-[#07080b] flex items-center justify-center flex-col gap-3"><AlertCircle size={24} className="text-red-400"/><span className="text-[13px] text-red-400">{gmailError}</span><Btn sm onClick={fetchGmail}><RefreshCw size={13}/> Retry</Btn></div>;
   if(!boarded)return <Onboarding onComplete={handleOnboard}/>;
