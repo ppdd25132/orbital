@@ -1252,15 +1252,10 @@ export default function Orbital() {
       }]);
       fetchGmail();
     } else if (authStatus === "unauthenticated") {
-      const saved = loadState();
-      if (saved?.isDemo) {
-        setIsDemo(true);
-        setShowSignIn(false);
-        setAccounts(saved.accounts || DEMO_ACCOUNTS);
-        setThreads(saved.threads  || DEMO_THREADS);
-      } else {
-        setShowSignIn(true);
-      }
+      // Always show sign-in screen — never auto-enter demo mode.
+      // Demo only activates when the user explicitly clicks "Try demo instead".
+      try { if (typeof window !== "undefined") localStorage.removeItem(STORE_KEY); } catch {}
+      setShowSignIn(true);
     }
   }, [authStatus, session?.access_token, session?.error]);
 
@@ -1289,7 +1284,7 @@ export default function Orbital() {
     setShowSignIn(false);
     setAccounts(DEMO_ACCOUNTS);
     setThreads(DEMO_THREADS);
-    saveState({ isDemo: true, accounts: DEMO_ACCOUNTS, threads: DEMO_THREADS });
+    // Do not persist demo state — next visit should always show sign-in screen
   }
 
   /* ── Thread actions ──────────────────────────────────── */
