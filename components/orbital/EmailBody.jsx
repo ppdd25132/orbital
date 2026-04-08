@@ -3,6 +3,12 @@
 import { useEffect, useMemo, useRef } from "react";
 import { isHtmlContent, linkifyText } from "./helpers";
 
+// Stable per-instance ID for iframe postMessage routing (avoids event.source
+// comparison which can mismatch when multiple iframes are on screen at once).
+function makeInstanceId() {
+  return `oif-${Math.random().toString(36).slice(2)}`;
+}
+
 function resolveInlineAttachments(html, attachments = {}) {
   if (!html || !Object.keys(attachments).length) return html;
 
@@ -39,18 +45,21 @@ function linkifyHtmlContent(html) {
   });
 }
 
-// Bug 1 fix: use a per-instance nonce embedded in the srcdoc so the parent
-// can route height messages to the correct iframe without relying on
-// event.source (which is unreliable for null-origin sandboxed iframes when
-// multiple iframes exist simultaneously in a multi-message thread).
-const HEIGHT_SCRIPT_TEMPLATE = `(function(){
-  var nonce='__NONCE__';
+// Builds the height-reporting script injected into every HTML email iframe.
+// The instanceId is embedded so the parent can route messages to the correct
+// EmailBody when multiple iframes are visible simultaneously (multi-message
+// threads). Using an ID string comparison is more reliable than comparing
+// event.source to iframe.contentWindow, which can fail mid-navigation.
+// The closing </script> is split in buildSrcDoc to prevent early tag close.
+function buildHeightScript(instanceId) {
+  return `(function(){
+  var ID=${JSON.stringify(instanceId)};
   function postH(){
     var h=Math.max(
       document.documentElement?document.documentElement.scrollHeight:0,
       document.body?document.body.scrollHeight:0
     );
-    if(h>0)parent.postMessage({type:'orbital-iframe-height',height:h,nonce:nonce},'*');
+    if(h>0)parent.postMessage({type:'orbital-iframe-height',id:ID,height:h},'*');
   }
   if(document.readyState==='loading'){
     window.addEventListener('load',postH);
@@ -68,21 +77,16 @@ const HEIGHT_SCRIPT_TEMPLATE = `(function(){
   setTimeout(postH,100);
   setTimeout(postH,500);
   setTimeout(postH,1500);
-})();`;
-
-let _nonceCounter = 0;
-function generateNonce() {
-  return `n${++_nonceCounter}_${Math.random().toString(36).slice(2, 8)}`;
+})();`
 }
 
-function buildSrcDoc(body, attachments, nonce) {
+function buildSrcDoc(body, attachments, instanceId) {
   let resolvedHtml = resolveInlineAttachments(body, attachments);
   // Bug 2 fix: linkify bare URLs in HTML text nodes
   resolvedHtml = linkifyHtmlContent(resolvedHtml);
 
-  const scriptBody = HEIGHT_SCRIPT_TEMPLATE.replace("__NONCE__", nonce);
   // Split </script> so the HTML parser doesn't close the script block early.
-  const scriptTag = `<script>${scriptBody}</scr` + `ipt>`;
+  const scriptTag = `<script>${buildHeightScript(instanceId)}</scr` + `ipt>`;
 
   return `<!DOCTYPE html>
 <html>
@@ -90,6 +94,7 @@ function buildSrcDoc(body, attachments, nonce) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light only" />
+    <meta name="referrer" content="no-referrer" />
     <style>
       :root { color-scheme: light; }
       html, body {
@@ -156,33 +161,39 @@ function buildSrcDoc(body, attachments, nonce) {
 export default function EmailBody({ body, attachments = {} }) {
   const html = isHtmlContent(body);
   const iframeRef = useRef(null);
-  // Stable nonce per component instance — never changes across re-renders.
-  const nonceRef = useRef(null);
-  if (nonceRef.current === null) nonceRef.current = generateNonce();
-  const nonce = nonceRef.current;
+  // Stable unique ID per component instance — used to route postMessages from
+  // the height script back to the correct iframe when several are on screen.
+  const instanceIdRef = useRef(null);
+  if (instanceIdRef.current === null) instanceIdRef.current = makeInstanceId();
+  const instanceId = instanceIdRef.current;
 
   const srcDoc = useMemo(
-    () => buildSrcDoc(body, attachments, nonce),
-    [attachments, body, nonce]
+    () => buildSrcDoc(body, attachments, instanceId),
+    // instanceId is stable so it won't cause unnecessary rebuilds.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attachments, body]
   );
 
-  // Bug 1 fix: use nonce to match height messages to this specific iframe
-  // instead of event.source, which can be null/unreliable for null-origin
-  // sandboxed iframes when several iframes are mounted simultaneously.
+  // Height sizing: the script inside each iframe sends
+  // { type: 'orbital-iframe-height', id: instanceId, height: h } via
+  // postMessage. We match on the id string rather than event.source so that
+  // multiple simultaneous iframes (multi-message threads) are routed correctly
+  // even if contentWindow references are temporarily stale during navigation.
   useEffect(() => {
     if (!html || !iframeRef.current) return;
     const iframe = iframeRef.current;
+    const id = instanceId;
 
     function handleMessage(event) {
       if (!event.data || event.data.type !== "orbital-iframe-height") return;
-      if (event.data.nonce !== nonce) return;
+      if (event.data.id !== id) return;
       const h = Number(event.data.height);
       if (h > 0) iframe.style.height = `${h}px`;
     }
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [html, nonce]);
+  }, [html, instanceId, srcDoc]);
 
   // Plain-text emails: render with URL linkification.
   if (!html) {
@@ -196,7 +207,7 @@ export default function EmailBody({ body, attachments = {} }) {
   }
 
   return (
-    // Bug 3 fix: overflow-hidden clips any content that escapes the iframe bounds.
+    // overflow-hidden clips any content that escapes the iframe bounds.
     <div className="overflow-hidden rounded-[18px] bg-white ring-1 ring-black/5">
       <iframe
         ref={iframeRef}

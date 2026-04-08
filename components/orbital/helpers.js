@@ -75,19 +75,29 @@ export function isHtmlContent(str) {
   return /<(html|head|body|div|span|table|td|tr|p|br|img|a|style|font)\b/i.test(str);
 }
 
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Match URLs in the ORIGINAL text (before escaping) so that HTML entities
+// like &gt; are never accidentally included inside a matched URL.
+// Each non-URL segment is escaped, and URLs are wrapped in <a> tags with a
+// properly-escaped href.
 export function linkifyText(text) {
   if (!text) return "";
-  const escaped = text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  return escaped.replace(
-    /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g,
-    (url) => {
-      const href = url.startsWith("www.") ? `https://${url}` : url;
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#5B8EF8;text-decoration:underline">${url}</a>`;
-    }
-  );
+  const URL_RE = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g;
+  let result = "";
+  let lastIndex = 0;
+  let match;
+  while ((match = URL_RE.exec(text)) !== null) {
+    result += escapeHtml(text.slice(lastIndex, match.index));
+    const raw = match[0];
+    const href = raw.startsWith("www.") ? `https://${raw}` : raw;
+    result += `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="color:#5B8EF8;text-decoration:underline">${escapeHtml(raw)}</a>`;
+    lastIndex = match.index + raw.length;
+  }
+  result += escapeHtml(text.slice(lastIndex));
+  return result;
 }
 
 export function initials(name = "") {
