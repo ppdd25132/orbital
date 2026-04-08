@@ -11,7 +11,6 @@ export const metadata = {
     statusBarStyle: "black-translucent",
     title: "Orbital",
   },
-  themeColor: "#0f172a",
 };
 
 export const viewport = {
