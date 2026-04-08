@@ -200,8 +200,13 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
       : elapsed < 86400000
         ? `${Math.round(elapsed / 3600000)}h ago`
         : `${Math.round(elapsed / 86400000)}d ago`;
+    // Use the real threadId (without account prefix) for API calls
+    const realThreadId = last._realThreadId || tid;
+    const threadAccountEmail = last.accountEmail;
     return {
       id: tid, accountId,
+      _realThreadId: realThreadId,
+      _accountEmail: threadAccountEmail,
       subject: last.subject || "(no subject)",
       status: "needs_response", starred: false,
       lastActivity, lastActivityTs: new Date(last.date).getTime(),
@@ -525,7 +530,13 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
 /* ═══════════════════════════════════════════════════════════════════
    THREAD LIST PANEL
    ═══════════════════════════════════════════════════════════════════ */
-function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, search, onSearch, onSelect, loading, onRefresh, isDemo }) {
+function ThreadListPanel({
+  threads, accounts, activeId, filter, onSetFilter,
+  search, onSearch, onSelect, loading, onRefresh, isDemo,
+  // Search
+  onSubmitSearch, searchResults, searchLoading, searchError,
+  aiSearch, onToggleAiSearch, activeSearchQuery, onClearSearch,
+}) {
   const CHIPS = [
     { id: "all",            label: "All" },
     { id: "needs_response", label: "Reply" },
@@ -534,7 +545,10 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
     { id: "starred",        label: "Starred" },
   ];
 
+  const isSearchMode = searchResults !== null;
+
   const visible = useMemo(() => {
+    if (isSearchMode) return searchResults || [];
     let t = [...threads];
     if (filter === "starred")          t = t.filter(x => x.starred);
     else if (filter === "archived")    t = t.filter(x => x.status === "archived");
@@ -548,7 +562,7 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
       );
     }
     return t.sort((a, b) => b.lastActivityTs - a.lastActivityTs);
-  }, [threads, filter, search]);
+  }, [threads, filter, search, isSearchMode, searchResults]);
 
   const TITLE_MAP = {
     all: "All Mail", needs_response: "Needs Reply",
@@ -556,26 +570,40 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
     resolved: "Done", archived: "Archived",
   };
 
+  function handleSearchKeyDown(e) {
+    if (e.key === "Enter" && search.trim() && !isDemo) {
+      onSubmitSearch(search);
+    }
+    if (e.key === "Escape" && isSearchMode) {
+      onClearSearch();
+    }
+  }
+
   return (
     <div className="flex flex-col h-full bg-[#0c0d10]">
       {/* Header */}
       <div className="px-4 pt-4 pb-2 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[14px] font-semibold text-[#e2e4e9] tracking-tight">
-            {TITLE_MAP[filter] || "Inbox"}
+            {isSearchMode
+              ? <span className="text-[#5B8EF8]">Search Results</span>
+              : (TITLE_MAP[filter] || "Inbox")
+            }
           </h2>
           <div className="flex items-center gap-1">
             {isDemo && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2a1a05] text-amber-400 border border-amber-500/20 font-semibold tracking-wide">DEMO</span>
             )}
-            <button
-              onClick={onRefresh}
-              disabled={loading}
-              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#16181f] text-[#3a3f4c] hover:text-[#8b8f9a] transition-colors disabled:opacity-50"
-              title="Refresh"
-            >
-              {loading ? <Spinner size={13} /> : <RefreshCw size={13} />}
-            </button>
+            {!isSearchMode && (
+              <button
+                onClick={onRefresh}
+                disabled={loading}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#16181f] text-[#3a3f4c] hover:text-[#8b8f9a] transition-colors disabled:opacity-50"
+                title="Refresh"
+              >
+                {loading ? <Spinner size={13} /> : <RefreshCw size={13} />}
+              </button>
+            )}
           </div>
         </div>
 
@@ -584,13 +612,31 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
           <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#3a3f4c] pointer-events-none" />
           <input
             value={search}
-            onChange={e => onSearch(e.target.value)}
-            placeholder="Search threads…"
-            className="w-full pl-8 pr-8 py-2 bg-[#16181f] border border-[#1e2028] rounded-lg text-[13px] text-[#c8ccd4] placeholder-[#2e3240] focus:outline-none focus:border-[#2a3040] transition-colors"
+            onChange={e => { onSearch(e.target.value); }}
+            onKeyDown={handleSearchKeyDown}
+            placeholder={aiSearch ? "Describe what you're looking for…" : "Search threads… (Enter to search)"}
+            className={`w-full pl-8 py-2 bg-[#16181f] border rounded-lg text-[13px] text-[#c8ccd4] placeholder-[#2e3240] focus:outline-none transition-colors ${
+              isSearchMode ? "pr-8 border-[#5B8EF8]/30 focus:border-[#5B8EF8]/50" : "pr-16 border-[#1e2028] focus:border-[#2a3040]"
+            }`}
           />
-          {search && (
+          {/* AI toggle (only when not in search mode) */}
+          {!isSearchMode && !isDemo && (
             <button
-              onClick={() => onSearch("")}
+              onClick={onToggleAiSearch}
+              title={aiSearch ? "AI search on — queries interpreted as natural language" : "AI search off — queries use Gmail syntax"}
+              className={`absolute right-7 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded transition-colors ${
+                aiSearch
+                  ? "text-[#7C5CF8]"
+                  : "text-[#2e3240] hover:text-[#5c6270]"
+              }`}
+            >
+              <Sparkles size={11} />
+            </button>
+          )}
+          {/* Clear button */}
+          {(search || isSearchMode) && (
+            <button
+              onClick={() => { onSearch(""); if (isSearchMode) onClearSearch(); }}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#4a4f5c] hover:text-[#8b8f9a]"
             >
               <X size={12} />
@@ -598,27 +644,59 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
           )}
         </div>
 
-        {/* Filter chips */}
-        <div className="flex gap-1 mt-2.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
-          {CHIPS.map(({ id, label }) => (
+        {/* AI badge + result count row, or filter chips */}
+        {isSearchMode ? (
+          <div className="flex items-center justify-between mt-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+              {aiSearch && (
+                <span className="flex-shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1030] text-[#7C5CF8] border border-purple-500/20 font-semibold">
+                  <Sparkles size={8} />AI
+                </span>
+              )}
+              <span className="text-[11px] text-[#3a3f4c] truncate">
+                {searchLoading
+                  ? "Searching…"
+                  : searchError
+                    ? <span className="text-red-400">{searchError}</span>
+                    : `${visible.length} result${visible.length !== 1 ? "s" : ""} for "${activeSearchQuery}"`
+                }
+              </span>
+            </div>
             <button
-              key={id}
-              onClick={() => onSetFilter(id)}
-              className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors
-                ${filter === id
-                  ? "bg-[#1a2a4a] text-[#5B8EF8] border border-blue-500/25"
-                  : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
-                }`}
+              onClick={onClearSearch}
+              className="flex-shrink-0 text-[11px] text-[#5B8EF8] hover:text-[#7CA4F8] ml-2 whitespace-nowrap"
             >
-              {label}
+              Clear
             </button>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="flex gap-1 mt-2.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
+            {/* AI hint when aiSearch is on */}
+            {aiSearch && !isDemo && (
+              <span className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium text-[#7C5CF8] bg-[#1a1030] border border-purple-500/20">
+                <Sparkles size={9} />AI on
+              </span>
+            )}
+            {CHIPS.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => onSetFilter(id)}
+                className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors
+                  ${filter === id
+                    ? "bg-[#1a2a4a] text-[#5B8EF8] border border-blue-500/25"
+                    : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
+                  }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Thread list */}
       <div className="flex-1 overflow-y-auto">
-        {loading && visible.length === 0 ? (
+        {(loading && visible.length === 0 && !isSearchMode) || searchLoading ? (
           <div className="px-4 pt-3 space-y-4">
             {[1, 2, 3, 4, 5].map(i => (
               <div key={i} className="py-1">
@@ -633,10 +711,23 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
             <div className="w-10 h-10 rounded-xl bg-[#16181f] flex items-center justify-center mb-3">
               <Inbox size={17} className="text-[#2e3240]" />
             </div>
-            <p className="text-sm font-medium text-[#3a3f4c]">Nothing here</p>
-            <p className="text-xs text-[#2e3240] mt-1">
-              {search ? "Try a different search" : "You're all caught up"}
+            <p className="text-sm font-medium text-[#3a3f4c]">
+              {isSearchMode ? "No results found" : "Nothing here"}
             </p>
+            <p className="text-xs text-[#2e3240] mt-1">
+              {isSearchMode
+                ? "Try a different search query"
+                : search ? "Try a different search" : "You're all caught up"
+              }
+            </p>
+            {isSearchMode && (
+              <button
+                onClick={onClearSearch}
+                className="mt-3 text-xs text-[#5B8EF8] hover:text-[#7CA4F8]"
+              >
+                Back to inbox
+              </button>
+            )}
           </div>
         ) : (
           <div className="anim-fade">
@@ -1268,6 +1359,13 @@ export default function Orbital() {
   const [isDemo,     setIsDemo]     = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
 
+  // Search
+  const [aiSearch,          setAiSearch]          = useState(false);
+  const [searchResults,     setSearchResults]     = useState(null); // null = no active search
+  const [searchLoading,     setSearchLoading]     = useState(false);
+  const [searchError,       setSearchError]       = useState(null);
+  const [activeSearchQuery, setActiveSearchQuery] = useState("");
+
   const activeThread = useMemo(
     () => threads.find(t => t.id === activeId) || null,
     [threads, activeId]
@@ -1322,6 +1420,44 @@ export default function Orbital() {
     }
   }
 
+  /* ── Search ──────────────────────────────────────────── */
+  async function performSearch(query) {
+    if (!query.trim()) return;
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchResults([]);
+    setActiveSearchQuery(query);
+    try {
+      const params = new URLSearchParams({ q: query });
+      if (aiSearch) params.set("naturalLanguage", "true");
+      const res = await fetch(`/api/gmail/search?${params}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `Search error ${res.status}`);
+      }
+      const data = await res.json();
+      const mapped = mapGmailToThreads(data.messages || []);
+      setSearchResults(mapped);
+      // If NL, update the displayed query to show the converted Gmail filter
+      if (aiSearch && data.query && data.query !== query) {
+        setActiveSearchQuery(query); // keep the human-readable version
+      }
+    } catch (e) {
+      setSearchError(e.message || "Search failed");
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  function clearSearch() {
+    setSearchResults(null);
+    setSearchError(null);
+    setSearchLoading(false);
+    setActiveSearchQuery("");
+    setSearch("");
+  }
+
   /* ── Demo ────────────────────────────────────────────── */
   function enterDemo() {
     setIsDemo(true);
@@ -1340,7 +1476,9 @@ export default function Orbital() {
     if (!isDemo) {
       const thread = threads.find(t => t.id === id);
       if (thread && !thread._fullLoaded) {
-        fetch(`/api/gmail/threads/${id}`)
+        const realId = thread._realThreadId || id;
+        const accountParam = thread._accountEmail ? `?account=${encodeURIComponent(thread._accountEmail)}` : '';
+        fetch(`/api/gmail/threads/${realId}${accountParam}`)
           .then(r => r.ok ? r.json() : null)
           .then(data => {
             if (!data?.thread?.messages?.length) return;
@@ -1438,7 +1576,7 @@ export default function Orbital() {
             onSelectAccount={id => setActiveAccountId(id)}
             onAddAccount={handleAddAccount}
             filter={filter}
-            onSetFilter={f => { setFilter(f); setActiveAccountId(null); }}
+            onSetFilter={f => { setFilter(f); setActiveAccountId(null); clearSearch(); }}
             view={view}
             onSetView={setView}
             session={session}
@@ -1485,6 +1623,14 @@ export default function Orbital() {
                     loading={loading}
                     onRefresh={isDemo ? () => {} : fetchGmail}
                     isDemo={isDemo}
+                    onSubmitSearch={performSearch}
+                    searchResults={searchResults}
+                    searchLoading={searchLoading}
+                    searchError={searchError}
+                    aiSearch={aiSearch}
+                    onToggleAiSearch={() => setAiSearch(v => !v)}
+                    activeSearchQuery={activeSearchQuery}
+                    onClearSearch={clearSearch}
                   />
                 </div>
 
