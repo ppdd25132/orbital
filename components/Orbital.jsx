@@ -197,7 +197,7 @@ function decodeHTMLEntities(str) {
     .replace(/&nbsp;/g, " ");
 }
 
-// Strip HTML tags and decode entities — for rendering email body as plain text
+// Strip HTML tags and decode entities — for plain text snippets/previews only
 function stripHtmlAndDecode(str) {
   if (!str) return "";
   return decodeHTMLEntities(
@@ -207,6 +207,73 @@ function stripHtmlAndDecode(str) {
       .replace(/<\/div>/gi, "\n")
       .replace(/<[^>]+>/g, "")
   ).trim();
+}
+
+// Detect if a string contains HTML markup (for choosing render mode)
+function isHtmlContent(str) {
+  if (!str) return false;
+  return /<(html|head|body|div|span|table|td|tr|p|br|img|a|style|font)\b/i.test(str);
+}
+
+// Renders an email body — iframe for HTML emails, plain text otherwise
+function EmailBody({ body, isMe }) {
+  const html = isHtmlContent(body);
+  const iframeRef = useRef(null);
+
+  useEffect(() => {
+    if (!html || !iframeRef.current) return;
+    const iframe = iframeRef.current;
+    const resizeObserver = new ResizeObserver(() => {
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (doc) {
+          iframe.style.height = doc.documentElement.scrollHeight + "px";
+        }
+      } catch {}
+    });
+
+    const onLoad = () => {
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (doc) {
+          iframe.style.height = doc.documentElement.scrollHeight + "px";
+          resizeObserver.observe(doc.documentElement);
+        }
+      } catch {}
+    };
+
+    iframe.addEventListener("load", onLoad);
+    return () => {
+      iframe.removeEventListener("load", onLoad);
+      resizeObserver.disconnect();
+    };
+  }, [html, body]);
+
+  if (html) {
+    const srcDoc = `<!DOCTYPE html><html><head><style>body{margin:0;padding:8px;overflow-x:hidden;background:#fff;font-family:Helvetica,Arial,sans-serif;}</style></head><body>${body}</body></html>`;
+    return (
+      <iframe
+        ref={iframeRef}
+        srcDoc={srcDoc}
+        sandbox="allow-same-origin"
+        style={{
+          width: "100%",
+          border: "none",
+          display: "block",
+          minHeight: "40px",
+          background: "#fff",
+          borderRadius: "8px",
+        }}
+        title="Email content"
+      />
+    );
+  }
+
+  return (
+    <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {body}
+    </div>
+  );
 }
 
 function initials(name = "") {
@@ -258,7 +325,7 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
         time: new Date(m.date).toLocaleDateString("en-US", {
           month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
         }),
-        body: stripHtmlAndDecode(m.body || m.snippet || ""),
+        body: m.body || m.snippet || "",
       })),
     };
   });
@@ -1330,7 +1397,7 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
                       : "bg-[#161820] text-[#a8acb8] rounded-2xl rounded-tl-md"
                     }`}
                 >
-                  <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{msg.body}</div>
+                  <EmailBody body={msg.body} isMe={isMe} />
                 </div>
               </div>
             </div>
@@ -1924,7 +1991,7 @@ export default function Orbital() {
                 time: m.internalDate
                   ? new Date(parseInt(m.internalDate)).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
                   : m.date || "",
-                body: stripHtmlAndDecode(m.body || m.snippet || ""),
+                body: m.body || m.snippet || "",
               };
             });
             setThreads(ts => ts.map(t => t.id === id ? { ...t, messages: fullMsgs, _fullLoaded: true } : t));
