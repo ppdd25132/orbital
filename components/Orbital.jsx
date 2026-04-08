@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import CommandPalette from "./CommandPalette";
 import {
@@ -250,7 +250,21 @@ function EmailBody({ body, isMe }) {
   }, [html, body]);
 
   if (html) {
-    const srcDoc = `<!DOCTYPE html><html><head><style>body{margin:0;padding:8px;overflow-x:hidden;background:#fff;font-family:Helvetica,Arial,sans-serif;}</style></head><body>${body}</body></html>`;
+    const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      *{box-sizing:border-box;}
+      html,body{margin:0;padding:8px 10px 4px;overflow-x:hidden;background:transparent!important;}
+      body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:#a8acb8;word-break:break-word;}
+      a{color:#5B8EF8;text-decoration:none;}a:hover{text-decoration:underline;}
+      img{max-width:100%;height:auto;}
+      blockquote{border-left:3px solid #2a2d38;margin:6px 0;padding-left:10px;color:#5c6270;}
+      pre,code{font-family:'Courier New',monospace;font-size:12px;background:#16181f;padding:2px 5px;border-radius:3px;}
+      pre{padding:10px 12px;overflow-x:auto;white-space:pre-wrap;}
+      table{border-collapse:collapse;max-width:100%;}
+      hr{border:none;border-top:1px solid #1e2028;margin:10px 0;}
+      h1,h2,h3,h4,h5,h6{color:#c8ccd4;margin:10px 0 5px;}
+      p{margin:0 0 6px;}
+      .gmail_quote,.gmail_attr{color:#5c6270!important;}
+    </style></head><body>${body}</body></html>`;
     return (
       <iframe
         ref={iframeRef}
@@ -261,8 +275,7 @@ function EmailBody({ body, isMe }) {
           border: "none",
           display: "block",
           minHeight: "40px",
-          background: "#fff",
-          borderRadius: "8px",
+          background: "transparent",
         }}
         title="Email content"
       />
@@ -1374,6 +1387,12 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-5 space-y-6">
+        {thread._loadingFull && (
+          <div className="flex items-center gap-2.5 text-[12px] text-[#3a3f4c] pb-2">
+            <Spinner size={13} />
+            <span>Loading full messages…</span>
+          </div>
+        )}
         {thread.messages.map(msg => {
           const isMe = acctEmails.includes(msg.from.email);
           const avatarColor = isMe
@@ -1550,7 +1569,7 @@ function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }
                 <div className="relative">
                   <button
                     onClick={() => setScheduleOpen(v => !v)}
-                    disabled={sending || !to.trim() || !subject.trim() || !body.trim()}
+                    disabled={sending}
                     title="Schedule send"
                     className="flex items-center justify-center w-9 min-h-[44px] rounded-xl rounded-l-none border-l border-[#4a6dd4] bg-[#5B8EF8] text-white hover:bg-[#4a7def] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
@@ -1723,7 +1742,46 @@ function MobileHeader({ session, isDemo, onSettings }) {
 /* ═══════════════════════════════════════════════════════════════════
    ROOT COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
-export default function Orbital() {
+/* ═══════════════════════════════════════════════════════════════════
+   ERROR BOUNDARY
+   ═══════════════════════════════════════════════════════════════════ */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error, info) {
+    console.error("Orbital error:", error, info?.componentStack);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full bg-[#0c0d10] px-6 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-[#1c1418] border border-red-500/20 flex items-center justify-center mb-4">
+            <AlertCircle size={22} className="text-red-400" />
+          </div>
+          <p className="text-[15px] font-semibold text-[#e2e4e9] mb-1">Something went wrong</p>
+          <p className="text-[12px] text-[#5c6270] mb-5">An unexpected error occurred</p>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            className="px-4 py-2.5 rounded-xl bg-[#5B8EF8] text-white text-[13px] font-semibold hover:bg-[#4a7def] transition-colors"
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ROOT COMPONENT
+   ═══════════════════════════════════════════════════════════════════ */
+function OrbitalApp() {
   const { data: session, status: authStatus } = useSession();
 
   // Data
@@ -1974,12 +2032,16 @@ export default function Orbital() {
     if (!isDemo) {
       const thread = threads.find(t => t.id === id);
       if (thread && !thread._fullLoaded) {
+        setThreads(ts => ts.map(t => t.id === id ? { ...t, _loadingFull: true } : t));
         const realId = thread._realThreadId || id;
         const accountParam = thread._accountEmail ? `?account=${encodeURIComponent(thread._accountEmail)}` : '';
         fetch(`/api/gmail/threads/${realId}${accountParam}`)
           .then(r => r.ok ? r.json() : null)
           .then(data => {
-            if (!data?.thread?.messages?.length) return;
+            if (!data?.thread?.messages?.length) {
+              setThreads(ts => ts.map(t => t.id === id ? { ...t, _loadingFull: false } : t));
+              return;
+            }
             const fullMsgs = data.thread.messages.map(m => {
               const fromStr = m.from || "";
               return {
@@ -1994,9 +2056,12 @@ export default function Orbital() {
                 body: m.body || m.snippet || "",
               };
             });
-            setThreads(ts => ts.map(t => t.id === id ? { ...t, messages: fullMsgs, _fullLoaded: true } : t));
+            setThreads(ts => ts.map(t => t.id === id ? { ...t, messages: fullMsgs, _fullLoaded: true, _loadingFull: false } : t));
           })
-          .catch(err => console.error("Thread fetch error:", err));
+          .catch(err => {
+            console.error("Thread fetch error:", err);
+            setThreads(ts => ts.map(t => t.id === id ? { ...t, _loadingFull: false } : t));
+          });
       }
     }
   }
@@ -2014,7 +2079,7 @@ export default function Orbital() {
 
   /* ── Account actions ─────────────────────────────────── */
   function handleAddAccount() {
-    window.location.href = "/api/auth/signin";
+    window.location.href = "/api/auth/link-account";
   }
 
   /* ── Account filter ──────────────────────────────────── */
@@ -2284,5 +2349,13 @@ export default function Orbital() {
         <kbd className="font-mono text-[10px]">⌘K</kbd>
       </button>
     </>
+  );
+}
+
+export default function Orbital() {
+  return (
+    <ErrorBoundary>
+      <OrbitalApp />
+    </ErrorBoundary>
   );
 }
