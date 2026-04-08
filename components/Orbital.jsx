@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
+import CommandPalette from "./CommandPalette";
 import {
   Mail, CheckCircle2, RefreshCw, Plus, Sparkles, Inbox,
   Eye, PenLine, Loader2, X, Check, Clock, Search,
@@ -35,14 +36,6 @@ const STATUS = {
   fyi:            { label: "FYI",          color: "text-slate-400",  bg: "bg-slate-500/10",   bdr: "border-slate-500/20",  Icon: Eye },
   resolved:       { label: "Done",         color: "text-emerald-400",bg: "bg-emerald-500/10", bdr: "border-emerald-500/20",Icon: CheckCircle2 },
   archived:       { label: "Archived",     color: "text-slate-600",  bg: "bg-slate-800/20",   bdr: "border-slate-700/20",  Icon: Archive },
-};
-
-const AI_CATEGORY = {
-  "needs-reply":       { label: "Needs Reply", color: "text-blue-400",   bg: "bg-blue-500/10",   bdr: "border-blue-500/20"   },
-  "fyi-only":          { label: "FYI",         color: "text-slate-400",  bg: "bg-slate-500/10",  bdr: "border-slate-500/20"  },
-  "waiting-on-others": { label: "Waiting",     color: "text-amber-400",  bg: "bg-amber-500/10",  bdr: "border-amber-500/20"  },
-  "actionable":        { label: "Action",      color: "text-purple-400", bg: "bg-purple-500/10", bdr: "border-purple-500/20" },
-  "promotional":       { label: "Promo",       color: "text-green-400",  bg: "bg-green-500/10",  bdr: "border-green-500/20"  },
 };
 
 const ACCT_COLORS = [
@@ -515,15 +508,10 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
           {thread.subject}
         </p>
 
-        {/* Row 3: preview + AI/status badge */}
+        {/* Row 3: preview + badge */}
         <div className="flex items-center gap-2 mt-1.5">
           <p className="text-[11px] text-[#3a3f4c] truncate flex-1">{thread.preview}</p>
-          {thread.aiCategory && AI_CATEGORY[thread.aiCategory] && (
-            <span className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold border ${AI_CATEGORY[thread.aiCategory].color} ${AI_CATEGORY[thread.aiCategory].bg} ${AI_CATEGORY[thread.aiCategory].bdr}`}>
-              {AI_CATEGORY[thread.aiCategory].label}
-            </span>
-          )}
-          {!thread.aiCategory && thread.status !== "needs_response" && (
+          {thread.status !== "needs_response" && (
             <StatusBadge status={thread.status} size="xs" />
           )}
         </div>
@@ -551,16 +539,11 @@ function ThreadListPanel({
   aiSearch, onToggleAiSearch, activeSearchQuery, onClearSearch,
 }) {
   const CHIPS = [
-    { id: "all",                   label: "All" },
-    { id: "needs_response",        label: "Reply" },
-    { id: "waiting",               label: "Waiting" },
-    { id: "resolved",              label: "Done" },
-    { id: "starred",               label: "Starred" },
-    { id: "ai:needs-reply",        label: "AI Reply",   ai: true },
-    { id: "ai:fyi-only",           label: "FYI",        ai: true },
-    { id: "ai:waiting-on-others",  label: "AI Waiting", ai: true },
-    { id: "ai:actionable",         label: "Action",     ai: true },
-    { id: "ai:promotional",        label: "Promo",      ai: true },
+    { id: "all",            label: "All" },
+    { id: "needs_response", label: "Reply" },
+    { id: "waiting",        label: "Waiting" },
+    { id: "resolved",       label: "Done" },
+    { id: "starred",        label: "Starred" },
   ];
 
   const isSearchMode = searchResults !== null;
@@ -568,9 +551,8 @@ function ThreadListPanel({
   const visible = useMemo(() => {
     if (isSearchMode) return searchResults || [];
     let t = [...threads];
-    if (filter === "starred")             t = t.filter(x => x.starred);
-    else if (filter === "archived")       t = t.filter(x => x.status === "archived");
-    else if (filter.startsWith("ai:"))    t = t.filter(x => x.aiCategory === filter.slice(3));
+    if (filter === "starred")          t = t.filter(x => x.starred);
+    else if (filter === "archived")    t = t.filter(x => x.status === "archived");
     else if (filter !== "all" && STATUS[filter]) t = t.filter(x => x.status === filter);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -587,11 +569,6 @@ function ThreadListPanel({
     all: "All Mail", needs_response: "Needs Reply",
     waiting: "Waiting", starred: "Starred",
     resolved: "Done", archived: "Archived",
-    "ai:needs-reply": "Needs Reply (AI)",
-    "ai:fyi-only": "FYI (AI)",
-    "ai:waiting-on-others": "Waiting (AI)",
-    "ai:actionable": "Action Items (AI)",
-    "ai:promotional": "Promotional (AI)",
   };
 
   function handleSearchKeyDown(e) {
@@ -701,19 +678,16 @@ function ThreadListPanel({
                 <Sparkles size={9} />AI on
               </span>
             )}
-            {CHIPS.map(({ id, label, ai }) => (
+            {CHIPS.map(({ id, label }) => (
               <button
                 key={id}
                 onClick={() => onSetFilter(id)}
                 className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors
                   ${filter === id
                     ? "bg-[#1a2a4a] text-[#5B8EF8] border border-blue-500/25"
-                    : ai
-                      ? "text-[#4a3f6b] hover:text-[#7B5CF8] border border-[#2a1f40]"
-                      : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
+                    : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
                   }`}
               >
-                {ai && <Sparkles size={8} className="inline mr-1 opacity-70" />}
                 {label}
               </button>
             ))}
@@ -793,6 +767,18 @@ function ReplyBox({ thread, accounts, isDemo, isOnline = true }) {
   const replyTo = lastMsg?.from?.email;
 
   useEffect(() => { if (open) textareaRef.current?.focus(); }, [open]);
+
+  // Listen for command-palette triggered actions
+  useEffect(() => {
+    function onOpenReply()   { setOpen(true); }
+    function onOpenAIDraft() { handleGenerate(); }
+    window.addEventListener("orbital:openReply",   onOpenReply);
+    window.addEventListener("orbital:openAIDraft", onOpenAIDraft);
+    return () => {
+      window.removeEventListener("orbital:openReply",   onOpenReply);
+      window.removeEventListener("orbital:openAIDraft", onOpenAIDraft);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleGenerate() {
     setOpen(true);
@@ -1382,8 +1368,9 @@ export default function Orbital() {
   const [mobilePanel,     setMobilePanel]     = useState("list"); // "list" | "detail"
 
   // UI
-  const [compose,    setCompose]    = useState(false);
-  const [loading,    setLoading]    = useState(false);
+  const [compose,        setCompose]        = useState(false);
+  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
+  const [loading,        setLoading]        = useState(false);
   const [gmailError, setGmailError] = useState(null);
   const [isDemo,     setIsDemo]     = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
@@ -1398,9 +1385,6 @@ export default function Orbital() {
   const [searchLoading,     setSearchLoading]     = useState(false);
   const [searchError,       setSearchError]       = useState(null);
   const [activeSearchQuery, setActiveSearchQuery] = useState("");
-
-  // AI classification cache — persists across refreshes within the session
-  const aiCategoryCache = useRef({});
 
   const activeThread = useMemo(
     () => threads.find(t => t.id === activeId) || null,
@@ -1468,22 +1452,7 @@ export default function Orbital() {
         throw new Error(d.error || `Gmail error ${res.status}`);
       }
       const data = await res.json();
-      const mapped = mapGmailToThreads(data.messages || []);
-
-      // Merge cached AI categories and preserve manual status/starred changes
-      setThreads(prev => {
-        const prevMap = Object.fromEntries(prev.map(t => [t.id, t]));
-        return mapped.map(t => ({
-          ...t,
-          status:     prevMap[t.id]?.status  ?? t.status,
-          starred:    prevMap[t.id]?.starred  ?? t.starred,
-          aiCategory: aiCategoryCache.current[t.id],
-        }));
-      });
-
-      // Classify only threads not already in the cache
-      const toClassify = mapped.filter(t => !aiCategoryCache.current[t.id]);
-      if (toClassify.length > 0) classifyThreads(toClassify);
+      setThreads(mapGmailToThreads(data.messages || []));
     } catch (e) {
       setGmailError(e.message);
     } finally {
@@ -1529,35 +1498,6 @@ export default function Orbital() {
     setSearch("");
   }
 
-  /* ── AI classification ───────────────────────────────── */
-  async function classifyThreads(toClassify) {
-    try {
-      const summaries = toClassify.map(t => ({
-        id:      t.id,
-        sender:  t.participants[0]?.name || t.participants[0]?.email || "",
-        subject: t.subject,
-        snippet: t.preview,
-      }));
-      const res = await fetch("/api/gmail/classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threads: summaries }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.classifications?.length) {
-        data.classifications.forEach(c => {
-          if (c.id && c.category) aiCategoryCache.current[c.id] = c.category;
-        });
-        setThreads(ts => ts.map(t => {
-          const cat = aiCategoryCache.current[t.id];
-          return cat && !t.aiCategory ? { ...t, aiCategory: cat } : t;
-        }));
-      }
-    } catch (err) {
-      console.error("Classification error:", err);
-    }
-  }
   /* ── Demo ────────────────────────────────────────────── */
   function enterDemo() {
     setIsDemo(true);
@@ -1628,13 +1568,19 @@ export default function Orbital() {
   /* ── Keyboard shortcuts ──────────────────────────────── */
   useEffect(() => {
     function onKey(e) {
+      // Cmd+K / Ctrl+K → open command palette (works from anywhere)
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdPaletteOpen(v => !v);
+        return;
+      }
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
       const sorted = displayedThreads
         .filter(t => filter === "starred" ? t.starred : filter === "all" || t.status === filter)
         .sort((a, b) => b.lastActivityTs - a.lastActivityTs)
         .map(t => t.id);
       if (e.key === "c") { setCompose(true); return; }
-      if (e.key === "Escape") { setCompose(false); return; }
+      if (e.key === "Escape") { setCompose(false); setCmdPaletteOpen(false); return; }
       if (!activeId) return;
       const i = sorted.indexOf(activeId);
       if (e.key === "j" && i < sorted.length - 1) handleSelect(sorted[i + 1]);
@@ -1770,12 +1716,21 @@ export default function Orbital() {
                     </div>
                     <p className="text-[14px] font-semibold text-[#2e3240]">Select a thread</p>
                     <p className="text-[12px] text-[#1e2028] mt-1 mb-6">Choose a conversation to read it here</p>
-                    <div className="flex items-center gap-2 text-[11px] text-[#2a2d38]">
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">c</kbd>
-                      <span>to compose</span>
-                      <span className="mx-1">·</span>
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">j/k</kbd>
-                      <span>to navigate</span>
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="flex items-center gap-2 text-[11px] text-[#2a2d38]">
+                        <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">c</kbd>
+                        <span>to compose</span>
+                        <span className="mx-1">·</span>
+                        <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">j/k</kbd>
+                        <span>to navigate</span>
+                      </div>
+                      <button
+                        onClick={() => setCmdPaletteOpen(true)}
+                        className="flex items-center gap-1.5 text-[11px] text-[#2a2d38] hover:text-[#5B8EF8] transition-colors"
+                      >
+                        <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">⌘K</kbd>
+                        <span>command palette</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1828,6 +1783,30 @@ export default function Orbital() {
           onClose={() => setCompose(false)}
         />
       )}
+
+      {/* Command palette */}
+      <CommandPalette
+        isOpen={cmdPaletteOpen}
+        onClose={() => setCmdPaletteOpen(false)}
+        accounts={accounts}
+        activeThread={activeThread}
+        threads={threads}
+        onSetFilter={f => { setFilter(f); setActiveAccountId(null); }}
+        onSetView={setView}
+        onSetCompose={setCompose}
+        onStatusChange={handleStatusChange}
+        onToggleStar={handleToggleStar}
+        onSelectAccount={id => setActiveAccountId(id)}
+      />
+
+      {/* ⌘K discovery hint — bottom-left corner (desktop only) */}
+      <button
+        onClick={() => setCmdPaletteOpen(true)}
+        className="fixed bottom-6 left-6 hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#111318] border border-[#1e2028] text-[#3a3f4c] hover:text-[#6b7280] hover:border-[#2a2d38] transition-all text-[11px] z-20"
+        title="Open command palette"
+      >
+        <kbd className="font-mono text-[10px]">⌘K</kbd>
+      </button>
     </>
   );
 }
