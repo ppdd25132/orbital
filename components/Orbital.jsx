@@ -6,7 +6,7 @@ import {
   Eye, PenLine, Loader2, X, Check, Clock, Search,
   ArrowLeft, Star, Archive, Settings, MoreHorizontal,
   AlertCircle, LogOut, Send, Edit3, ChevronDown,
-  Zap, CornerDownRight, BellOff, Calendar, CalendarClock
+  Zap, CornerDownRight, WifiOff, BellOff, Calendar, CalendarClock
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -50,6 +50,14 @@ const STATUS = {
   fyi:            { label: "FYI",          color: "text-slate-400",  bg: "bg-slate-500/10",   bdr: "border-slate-500/20",  Icon: Eye },
   resolved:       { label: "Done",         color: "text-emerald-400",bg: "bg-emerald-500/10", bdr: "border-emerald-500/20",Icon: CheckCircle2 },
   archived:       { label: "Archived",     color: "text-slate-600",  bg: "bg-slate-800/20",   bdr: "border-slate-700/20",  Icon: Archive },
+};
+
+const AI_CATEGORY = {
+  "needs-reply":       { label: "Needs Reply", color: "text-blue-400",   bg: "bg-blue-500/10",   bdr: "border-blue-500/20"   },
+  "fyi-only":          { label: "FYI",         color: "text-slate-400",  bg: "bg-slate-500/10",  bdr: "border-slate-500/20"  },
+  "waiting-on-others": { label: "Waiting",     color: "text-amber-400",  bg: "bg-amber-500/10",  bdr: "border-amber-500/20"  },
+  "actionable":        { label: "Action",      color: "text-purple-400", bg: "bg-purple-500/10", bdr: "border-purple-500/20" },
+  "promotional":       { label: "Promo",       color: "text-green-400",  bg: "bg-green-500/10",  bdr: "border-green-500/20"  },
 };
 
 const ACCT_COLORS = [
@@ -236,8 +244,13 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
       : elapsed < 86400000
         ? `${Math.round(elapsed / 3600000)}h ago`
         : `${Math.round(elapsed / 86400000)}d ago`;
+    // Use the real threadId (without account prefix) for API calls
+    const realThreadId = last._realThreadId || tid;
+    const threadAccountEmail = last.accountEmail;
     return {
       id: tid, accountId,
+      _realThreadId: realThreadId,
+      _accountEmail: threadAccountEmail,
       subject: last.subject || "(no subject)",
       status: "needs_response", starred: false,
       lastActivity, lastActivityTs: new Date(last.date).getTime(),
@@ -258,22 +271,21 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
   });
 }
 
-async function generateDraft(thread, accounts) {
+async function generateDraft(thread, accounts, tone = "professional") {
   const acct = accounts.find(a => a.id === thread.accountId);
-  const hist = thread.messages
-    .map(m => `${m.from.name} (${m.time}):\n${m.body}`)
-    .join("\n\n---\n\n");
-  const sys = `You are an AI drafting assistant for ${acct?.name || "the user"} (${acct?.email || ""}).
-Draft a professional, warm reply to the last message in this email thread.
-Style: direct, concise, addresses every question. Open with a greeting and close with "Best, ${acct?.name?.split(" ")[0] || ""}".
-Respond ONLY with the draft — no preamble or meta-commentary.`;
   try {
     const r = await fetch("/api/draft", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        system: sys,
-        messages: [{ role: "user", content: `Thread:\n\n${hist}\n\nDraft a reply.` }],
+        threadMessages: thread.messages.map(m => ({
+          from: { name: m.from.name, email: m.from.email },
+          time: m.time,
+          body: m.body,
+        })),
+        userName: acct?.name || "",
+        userEmail: acct?.email || "",
+        tone,
       }),
     });
     const d = await r.json();
@@ -759,10 +771,15 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
           {thread.subject}
         </p>
 
-        {/* Row 3: preview + badge */}
+        {/* Row 3: preview + AI/status badge */}
         <div className="flex items-center gap-2 mt-1.5">
           <p className="text-[11px] text-[#3a3f4c] truncate flex-1">{thread.preview}</p>
-          {thread.status !== "needs_response" && (
+          {thread.aiCategory && AI_CATEGORY[thread.aiCategory] && (
+            <span className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold border ${AI_CATEGORY[thread.aiCategory].color} ${AI_CATEGORY[thread.aiCategory].bg} ${AI_CATEGORY[thread.aiCategory].bdr}`}>
+              {AI_CATEGORY[thread.aiCategory].label}
+            </span>
+          )}
+          {!thread.aiCategory && thread.status !== "needs_response" && (
             <StatusBadge status={thread.status} size="xs" />
           )}
         </div>
@@ -782,19 +799,34 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
 /* ═══════════════════════════════════════════════════════════════════
    THREAD LIST PANEL
    ═══════════════════════════════════════════════════════════════════ */
-function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, search, onSearch, onSelect, loading, onRefresh, isDemo }) {
+function ThreadListPanel({
+  threads, accounts, activeId, filter, onSetFilter,
+  search, onSearch, onSelect, loading, onRefresh, isDemo,
+  // Search
+  onSubmitSearch, searchResults, searchLoading, searchError,
+  aiSearch, onToggleAiSearch, activeSearchQuery, onClearSearch,
+}) {
   const CHIPS = [
-    { id: "all",            label: "All" },
-    { id: "needs_response", label: "Reply" },
-    { id: "waiting",        label: "Waiting" },
-    { id: "resolved",       label: "Done" },
-    { id: "starred",        label: "Starred" },
+    { id: "all",                   label: "All" },
+    { id: "needs_response",        label: "Reply" },
+    { id: "waiting",               label: "Waiting" },
+    { id: "resolved",              label: "Done" },
+    { id: "starred",               label: "Starred" },
+    { id: "ai:needs-reply",        label: "AI Reply",   ai: true },
+    { id: "ai:fyi-only",           label: "FYI",        ai: true },
+    { id: "ai:waiting-on-others",  label: "AI Waiting", ai: true },
+    { id: "ai:actionable",         label: "Action",     ai: true },
+    { id: "ai:promotional",        label: "Promo",      ai: true },
   ];
 
+  const isSearchMode = searchResults !== null;
+
   const visible = useMemo(() => {
+    if (isSearchMode) return searchResults || [];
     let t = [...threads];
-    if (filter === "starred")          t = t.filter(x => x.starred);
-    else if (filter === "archived")    t = t.filter(x => x.status === "archived");
+    if (filter === "starred")             t = t.filter(x => x.starred);
+    else if (filter === "archived")       t = t.filter(x => x.status === "archived");
+    else if (filter.startsWith("ai:"))    t = t.filter(x => x.aiCategory === filter.slice(3));
     else if (filter !== "all" && STATUS[filter]) t = t.filter(x => x.status === filter);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -805,13 +837,27 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
       );
     }
     return t.sort((a, b) => b.lastActivityTs - a.lastActivityTs);
-  }, [threads, filter, search]);
+  }, [threads, filter, search, isSearchMode, searchResults]);
 
   const TITLE_MAP = {
     all: "All Mail", needs_response: "Needs Reply",
     waiting: "Waiting", starred: "Starred",
     resolved: "Done", archived: "Archived",
+    "ai:needs-reply": "Needs Reply (AI)",
+    "ai:fyi-only": "FYI (AI)",
+    "ai:waiting-on-others": "Waiting (AI)",
+    "ai:actionable": "Action Items (AI)",
+    "ai:promotional": "Promotional (AI)",
   };
+
+  function handleSearchKeyDown(e) {
+    if (e.key === "Enter" && search.trim() && !isDemo) {
+      onSubmitSearch(search);
+    }
+    if (e.key === "Escape" && isSearchMode) {
+      onClearSearch();
+    }
+  }
 
   return (
     <div className="flex flex-col h-full bg-[#0c0d10]">
@@ -819,20 +865,25 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
       <div className="px-4 pt-4 pb-2 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[14px] font-semibold text-[#e2e4e9] tracking-tight">
-            {TITLE_MAP[filter] || "Inbox"}
+            {isSearchMode
+              ? <span className="text-[#5B8EF8]">Search Results</span>
+              : (TITLE_MAP[filter] || "Inbox")
+            }
           </h2>
           <div className="flex items-center gap-1">
             {isDemo && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2a1a05] text-amber-400 border border-amber-500/20 font-semibold tracking-wide">DEMO</span>
             )}
-            <button
-              onClick={onRefresh}
-              disabled={loading}
-              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#16181f] text-[#3a3f4c] hover:text-[#8b8f9a] transition-colors disabled:opacity-50"
-              title="Refresh"
-            >
-              {loading ? <Spinner size={13} /> : <RefreshCw size={13} />}
-            </button>
+            {!isSearchMode && (
+              <button
+                onClick={onRefresh}
+                disabled={loading}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#16181f] text-[#3a3f4c] hover:text-[#8b8f9a] transition-colors disabled:opacity-50"
+                title="Refresh"
+              >
+                {loading ? <Spinner size={13} /> : <RefreshCw size={13} />}
+              </button>
+            )}
           </div>
         </div>
 
@@ -841,13 +892,31 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
           <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#3a3f4c] pointer-events-none" />
           <input
             value={search}
-            onChange={e => onSearch(e.target.value)}
-            placeholder="Search threads…"
-            className="w-full pl-8 pr-8 py-2 bg-[#16181f] border border-[#1e2028] rounded-lg text-[13px] text-[#c8ccd4] placeholder-[#2e3240] focus:outline-none focus:border-[#2a3040] transition-colors"
+            onChange={e => { onSearch(e.target.value); }}
+            onKeyDown={handleSearchKeyDown}
+            placeholder={aiSearch ? "Describe what you're looking for…" : "Search threads… (Enter to search)"}
+            className={`w-full pl-8 py-2 bg-[#16181f] border rounded-lg text-[13px] text-[#c8ccd4] placeholder-[#2e3240] focus:outline-none transition-colors ${
+              isSearchMode ? "pr-8 border-[#5B8EF8]/30 focus:border-[#5B8EF8]/50" : "pr-16 border-[#1e2028] focus:border-[#2a3040]"
+            }`}
           />
-          {search && (
+          {/* AI toggle (only when not in search mode) */}
+          {!isSearchMode && !isDemo && (
             <button
-              onClick={() => onSearch("")}
+              onClick={onToggleAiSearch}
+              title={aiSearch ? "AI search on — queries interpreted as natural language" : "AI search off — queries use Gmail syntax"}
+              className={`absolute right-7 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded transition-colors ${
+                aiSearch
+                  ? "text-[#7C5CF8]"
+                  : "text-[#2e3240] hover:text-[#5c6270]"
+              }`}
+            >
+              <Sparkles size={11} />
+            </button>
+          )}
+          {/* Clear button */}
+          {(search || isSearchMode) && (
+            <button
+              onClick={() => { onSearch(""); if (isSearchMode) onClearSearch(); }}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#4a4f5c] hover:text-[#8b8f9a]"
             >
               <X size={12} />
@@ -855,27 +924,62 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
           )}
         </div>
 
-        {/* Filter chips */}
-        <div className="flex gap-1 mt-2.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
-          {CHIPS.map(({ id, label }) => (
+        {/* AI badge + result count row, or filter chips */}
+        {isSearchMode ? (
+          <div className="flex items-center justify-between mt-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+              {aiSearch && (
+                <span className="flex-shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1030] text-[#7C5CF8] border border-purple-500/20 font-semibold">
+                  <Sparkles size={8} />AI
+                </span>
+              )}
+              <span className="text-[11px] text-[#3a3f4c] truncate">
+                {searchLoading
+                  ? "Searching…"
+                  : searchError
+                    ? <span className="text-red-400">{searchError}</span>
+                    : `${visible.length} result${visible.length !== 1 ? "s" : ""} for "${activeSearchQuery}"`
+                }
+              </span>
+            </div>
             <button
-              key={id}
-              onClick={() => onSetFilter(id)}
-              className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors
-                ${filter === id
-                  ? "bg-[#1a2a4a] text-[#5B8EF8] border border-blue-500/25"
-                  : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
-                }`}
+              onClick={onClearSearch}
+              className="flex-shrink-0 text-[11px] text-[#5B8EF8] hover:text-[#7CA4F8] ml-2 whitespace-nowrap"
             >
-              {label}
+              Clear
             </button>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="flex gap-1 mt-2.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
+            {/* AI hint when aiSearch is on */}
+            {aiSearch && !isDemo && (
+              <span className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium text-[#7C5CF8] bg-[#1a1030] border border-purple-500/20">
+                <Sparkles size={9} />AI on
+              </span>
+            )}
+            {CHIPS.map(({ id, label, ai }) => (
+              <button
+                key={id}
+                onClick={() => onSetFilter(id)}
+                className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors
+                  ${filter === id
+                    ? "bg-[#1a2a4a] text-[#5B8EF8] border border-blue-500/25"
+                    : ai
+                      ? "text-[#4a3f6b] hover:text-[#7B5CF8] border border-[#2a1f40]"
+                      : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
+                  }`}
+              >
+                {ai && <Sparkles size={8} className="inline mr-1 opacity-70" />}
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Thread list */}
       <div className="flex-1 overflow-y-auto">
-        {loading && visible.length === 0 ? (
+        {(loading && visible.length === 0 && !isSearchMode) || searchLoading ? (
           <div className="px-4 pt-3 space-y-4">
             {[1, 2, 3, 4, 5].map(i => (
               <div key={i} className="py-1">
@@ -890,10 +994,23 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
             <div className="w-10 h-10 rounded-xl bg-[#16181f] flex items-center justify-center mb-3">
               <Inbox size={17} className="text-[#2e3240]" />
             </div>
-            <p className="text-sm font-medium text-[#3a3f4c]">Nothing here</p>
-            <p className="text-xs text-[#2e3240] mt-1">
-              {search ? "Try a different search" : "You're all caught up"}
+            <p className="text-sm font-medium text-[#3a3f4c]">
+              {isSearchMode ? "No results found" : "Nothing here"}
             </p>
+            <p className="text-xs text-[#2e3240] mt-1">
+              {isSearchMode
+                ? "Try a different search query"
+                : search ? "Try a different search" : "You're all caught up"
+              }
+            </p>
+            {isSearchMode && (
+              <button
+                onClick={onClearSearch}
+                className="mt-3 text-xs text-[#5B8EF8] hover:text-[#7CA4F8]"
+              >
+                Back to inbox
+              </button>
+            )}
           </div>
         ) : (
           <div className="anim-fade">
@@ -916,7 +1033,7 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
 /* ═══════════════════════════════════════════════════════════════════
    REPLY BOX
    ═══════════════════════════════════════════════════════════════════ */
-function ReplyBox({ thread, accounts, isDemo }) {
+function ReplyBox({ thread, accounts, isDemo, isOnline = true }) {
   const [open,    setOpen]    = useState(false);
   const [body,    setBody]    = useState("");
   const [drafting, setDrafting] = useState(false);
@@ -924,6 +1041,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
   const [sent,    setSent]    = useState(false);
   const [error,   setError]   = useState(null);
   const [aiUsed,  setAiUsed]  = useState(false);
+  const [tone,    setTone]    = useState("professional");
   const textareaRef = useRef(null);
 
   const acct    = accounts.find(a => a.id === thread.accountId);
@@ -936,7 +1054,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
     setOpen(true);
     setDrafting(true);
     setAiUsed(true);
-    const draft = await generateDraft(thread, accounts);
+    const draft = await generateDraft(thread, accounts, tone);
     setBody(draft);
     setDrafting(false);
     setTimeout(() => textareaRef.current?.focus(), 50);
@@ -1030,7 +1148,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
       {drafting ? (
         <div className="flex items-center gap-3 px-4 py-5 text-[13px] text-[#5c6270]">
           <Spinner size={15} />
-          <span>Drafting reply…</span>
+          <span>Drafting {tone} reply…</span>
         </div>
       ) : (
         <>
@@ -1048,16 +1166,34 @@ function ReplyBox({ thread, accounts, isDemo }) {
             </div>
           )}
           <div className="flex items-center justify-between px-4 py-3 border-t border-[#1a1c22]">
-            <button
-              onClick={handleGenerate}
-              className="flex items-center gap-1.5 text-[12px] text-[#5B8EF8] hover:text-[#7aaafe] transition-colors min-h-[36px] px-1"
-            >
-              <Sparkles size={12} />
-              {aiUsed ? "Regenerate" : "Draft with AI"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleGenerate}
+                className="flex items-center gap-1.5 text-[12px] text-[#5B8EF8] hover:text-[#7aaafe] transition-colors min-h-[36px] px-1"
+              >
+                <Sparkles size={12} />
+                {aiUsed ? "Regenerate" : "Draft with AI"}
+              </button>
+              <div className="flex items-center gap-0.5 pl-2 border-l border-[#1e2028]">
+                {["professional", "casual", "brief"].map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setTone(t)}
+                    className={`px-2 py-1 rounded text-[10px] font-medium capitalize transition-colors ${
+                      tone === t
+                        ? "bg-blue-500/15 text-[#5B8EF8] border border-blue-500/30"
+                        : "text-[#3a3f4c] hover:text-[#5c6270] border border-transparent"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               onClick={handleSend}
-              disabled={sending || !body.trim()}
+              disabled={sending || !body.trim() || !isOnline}
+              title={!isOnline ? "Connect to internet to send" : undefined}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#5B8EF8] text-white text-[13px] font-semibold hover:bg-[#4a7def] active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed min-h-[36px]"
             >
               {sending ? <Spinner size={13} /> : <Send size={12} />}
@@ -1073,7 +1209,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
 /* ═══════════════════════════════════════════════════════════════════
    THREAD DETAIL
    ═══════════════════════════════════════════════════════════════════ */
-function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, onSnooze, isMobile, isDemo }) {
+function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, onSnooze, isMobile, isDemo, isOnline = true }) {
   const [menuOpen,   setMenuOpen]   = useState(false);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const menuRef   = useRef(null);
@@ -1217,7 +1353,7 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
       </div>
 
       {/* Reply */}
-      <ReplyBox thread={thread} accounts={accounts} isDemo={isDemo} />
+      <ReplyBox thread={thread} accounts={accounts} isDemo={isDemo} isOnline={isOnline} />
     </div>
   );
 }
@@ -1225,7 +1361,7 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
 /* ═══════════════════════════════════════════════════════════════════
    COMPOSE MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ComposeModal({ accounts, isDemo, onClose, onSchedule }) {
+function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }) {
   const [to,           setTo]           = useState("");
   const [subject,      setSubject]      = useState("");
   const [body,         setBody]         = useState("");
@@ -1235,7 +1371,6 @@ function ComposeModal({ accounts, isDemo, onClose, onSchedule }) {
   const [error,        setError]        = useState(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduledFor, setScheduledFor] = useState(null);
-  const scheduleRef = useRef(null);
 
   const acct = accounts.find(a => a.id === acctId);
 
@@ -1352,13 +1487,14 @@ function ComposeModal({ accounts, isDemo, onClose, onSchedule }) {
               <div className="flex items-center relative">
                 <button
                   onClick={handleSend}
-                  disabled={sending || !to.trim() || !subject.trim() || !body.trim()}
+                  disabled={sending || !to.trim() || !subject.trim() || !body.trim() || !isOnline}
+                  title={!isOnline ? "Connect to internet to send" : undefined}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl rounded-r-none bg-[#5B8EF8] text-white text-[13px] font-semibold hover:bg-[#4a7def] active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px]"
                 >
                   {sending ? <Spinner size={14} /> : <Send size={13} />}
                   {sending ? "Sending…" : "Send"}
                 </button>
-                <div ref={scheduleRef} className="relative">
+                <div className="relative">
                   <button
                     onClick={() => setScheduleOpen(v => !v)}
                     disabled={sending || !to.trim() || !subject.trim() || !body.trim()}
@@ -1555,12 +1691,26 @@ export default function Orbital() {
   const [gmailError, setGmailError] = useState(null);
   const [isDemo,     setIsDemo]     = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
+  const [isOnline,   setIsOnline]   = useState(true);
 
   // Snooze & Scheduled Send
   const [snoozedThreads,    setSnoozedThreads]    = useState(() => loadSnoozed());
   const [scheduledMessages, setScheduledMessages] = useState(() => loadScheduled());
   const isDemoRef = useRef(false);
   useEffect(() => { isDemoRef.current = isDemo; }, [isDemo]);
+
+  // Offline queue: {type: "statusChange", id, status}
+  const offlineQueue = useRef([]);
+
+  // Search
+  const [aiSearch,          setAiSearch]          = useState(false);
+  const [searchResults,     setSearchResults]     = useState(null); // null = no active search
+  const [searchLoading,     setSearchLoading]     = useState(false);
+  const [searchError,       setSearchError]       = useState(null);
+  const [activeSearchQuery, setActiveSearchQuery] = useState("");
+
+  // AI classification cache — persists across refreshes within the session
+  const aiCategoryCache = useRef({});
 
   const activeThread = useMemo(
     () => threads.find(t => t.id === activeId) || null,
@@ -1597,6 +1747,26 @@ export default function Orbital() {
     }
   }, [authStatus, session?.access_token, session?.error]);
 
+  /* ── Online/Offline detection ───────────────────────── */
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    function handleOnline() {
+      setIsOnline(true);
+      // Replay queued offline status changes
+      const queue = offlineQueue.current.splice(0);
+      queue.forEach(({ id, status }) =>
+        setThreads(ts => ts.map(t => t.id === id ? { ...t, status } : t))
+      );
+    }
+    function handleOffline() { setIsOnline(false); }
+    window.addEventListener("online",  handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online",  handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   /* ── Gmail fetch ─────────────────────────────────────── */
   async function fetchGmail() {
     setLoading(true);
@@ -1608,7 +1778,22 @@ export default function Orbital() {
         throw new Error(d.error || `Gmail error ${res.status}`);
       }
       const data = await res.json();
-      setThreads(mapGmailToThreads(data.messages || []));
+      const mapped = mapGmailToThreads(data.messages || []);
+
+      // Merge cached AI categories and preserve manual status/starred changes
+      setThreads(prev => {
+        const prevMap = Object.fromEntries(prev.map(t => [t.id, t]));
+        return mapped.map(t => ({
+          ...t,
+          status:     prevMap[t.id]?.status  ?? t.status,
+          starred:    prevMap[t.id]?.starred  ?? t.starred,
+          aiCategory: aiCategoryCache.current[t.id],
+        }));
+      });
+
+      // Classify only threads not already in the cache
+      const toClassify = mapped.filter(t => !aiCategoryCache.current[t.id]);
+      if (toClassify.length > 0) classifyThreads(toClassify);
     } catch (e) {
       setGmailError(e.message);
     } finally {
@@ -1616,12 +1801,77 @@ export default function Orbital() {
     }
   }
 
+  /* ── Search ──────────────────────────────────────────── */
+  async function performSearch(query) {
+    if (!query.trim()) return;
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchResults([]);
+    setActiveSearchQuery(query);
+    try {
+      const params = new URLSearchParams({ q: query });
+      if (aiSearch) params.set("naturalLanguage", "true");
+      const res = await fetch(`/api/gmail/search?${params}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `Search error ${res.status}`);
+      }
+      const data = await res.json();
+      const mapped = mapGmailToThreads(data.messages || []);
+      setSearchResults(mapped);
+      // If NL, update the displayed query to show the converted Gmail filter
+      if (aiSearch && data.query && data.query !== query) {
+        setActiveSearchQuery(query); // keep the human-readable version
+      }
+    } catch (e) {
+      setSearchError(e.message || "Search failed");
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  function clearSearch() {
+    setSearchResults(null);
+    setSearchError(null);
+    setSearchLoading(false);
+    setActiveSearchQuery("");
+    setSearch("");
+  }
+
+  /* ── AI classification ───────────────────────────────── */
+  async function classifyThreads(toClassify) {
+    try {
+      const summaries = toClassify.map(t => ({
+        id:      t.id,
+        sender:  t.participants[0]?.name || t.participants[0]?.email || "",
+        subject: t.subject,
+        snippet: t.preview,
+      }));
+      const res = await fetch("/api/gmail/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threads: summaries }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.classifications?.length) {
+        data.classifications.forEach(c => {
+          if (c.id && c.category) aiCategoryCache.current[c.id] = c.category;
+        });
+        setThreads(ts => ts.map(t => {
+          const cat = aiCategoryCache.current[t.id];
+          return cat && !t.aiCategory ? { ...t, aiCategory: cat } : t;
+        }));
+      }
+    } catch (err) {
+      console.error("Classification error:", err);
+    }
+  }
   /* ── Timed items check (snooze returns + scheduled sends) ─── */
   useEffect(() => {
     function check() {
       const now = Date.now();
-
-      // Snoozed threads: surface any that are due
       const snoozed = loadSnoozed();
       const due = snoozed.filter(s => s.snoozeUntil <= now);
       if (due.length > 0) {
@@ -1635,8 +1885,6 @@ export default function Orbital() {
           return toAdd.length > 0 ? [...toAdd, ...ts] : ts;
         });
       }
-
-      // Scheduled sends: fire any that are due (skip in demo mode)
       if (isDemoRef.current) return;
       const scheduled = loadScheduled();
       const dueMsgs = scheduled.filter(m => m.status === "pending" && m.scheduledAt <= now);
@@ -1645,8 +1893,7 @@ export default function Orbital() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            to: msg.to, subject: msg.subject, body: msg.body,
-            fromEmail: msg.fromEmail,
+            to: msg.to, subject: msg.subject, body: msg.body, fromEmail: msg.fromEmail,
             ...(msg.replyToMessageId ? { replyToMessageId: msg.replyToMessageId } : {}),
           }),
         }).then(r => {
@@ -1720,7 +1967,9 @@ export default function Orbital() {
     if (!isDemo) {
       const thread = threads.find(t => t.id === id);
       if (thread && !thread._fullLoaded) {
-        fetch(`/api/gmail/threads/${id}`)
+        const realId = thread._realThreadId || id;
+        const accountParam = thread._accountEmail ? `?account=${encodeURIComponent(thread._accountEmail)}` : '';
+        fetch(`/api/gmail/threads/${realId}${accountParam}`)
           .then(r => r.ok ? r.json() : null)
           .then(data => {
             if (!data?.thread?.messages?.length) return;
@@ -1747,6 +1996,9 @@ export default function Orbital() {
 
   function handleStatusChange(id, status) {
     setThreads(ts => ts.map(t => t.id === id ? { ...t, status } : t));
+    if (!isOnline && !isDemo) {
+      offlineQueue.current.push({ id, status });
+    }
   }
 
   function handleToggleStar(id) {
@@ -1819,7 +2071,7 @@ export default function Orbital() {
             onSelectAccount={id => setActiveAccountId(id)}
             onAddAccount={handleAddAccount}
             filter={filter}
-            onSetFilter={f => { setFilter(f); setActiveAccountId(null); }}
+            onSetFilter={f => { setFilter(f); setActiveAccountId(null); clearSearch(); }}
             view={view}
             onSetView={setView}
             session={session}
@@ -1880,6 +2132,14 @@ export default function Orbital() {
                       loading={loading}
                       onRefresh={isDemo ? () => {} : fetchGmail}
                       isDemo={isDemo}
+                      onSubmitSearch={performSearch}
+                      searchResults={searchResults}
+                      searchLoading={searchLoading}
+                      searchError={searchError}
+                      aiSearch={aiSearch}
+                      onToggleAiSearch={() => setAiSearch(v => !v)}
+                      activeSearchQuery={activeSearchQuery}
+                      onClearSearch={clearSearch}
                     />
                   )}
                 </div>
@@ -1909,6 +2169,7 @@ export default function Orbital() {
                     onSnooze={handleSnooze}
                     isMobile={isMobileDetail}
                     isDemo={isDemo}
+                    isOnline={isOnline}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center px-8 bg-[#0c0d10]">
@@ -1934,8 +2195,10 @@ export default function Orbital() {
 
       {/* Desktop FAB */}
       <button
-        onClick={() => setCompose(true)}
-        className="fixed bottom-6 right-6 hidden md:flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#5B8EF8] text-white text-[13px] font-semibold shadow-lg shadow-blue-500/20 hover:bg-[#4a7def] active:scale-[0.97] transition-all z-20"
+        onClick={() => isOnline && setCompose(true)}
+        disabled={!isOnline}
+        title={!isOnline ? "Connect to internet to send" : undefined}
+        className="fixed bottom-6 right-6 hidden md:flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#5B8EF8] text-white text-[13px] font-semibold shadow-lg shadow-blue-500/20 hover:bg-[#4a7def] active:scale-[0.97] transition-all z-20 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <Edit3 size={14} />
         Compose
@@ -1956,11 +2219,20 @@ export default function Orbital() {
         </div>
       )}
 
+      {/* Offline banner */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 px-4 py-2 bg-[#1a1520] border-b border-amber-500/20 anim-slide-up">
+          <WifiOff size={13} className="text-amber-400 flex-shrink-0" />
+          <span className="text-[12px] text-amber-300 font-medium">You&apos;re offline — showing cached emails</span>
+        </div>
+      )}
+
       {/* Compose modal */}
       {compose && (
         <ComposeModal
           accounts={accounts}
           isDemo={isDemo}
+          isOnline={isOnline}
           onClose={() => setCompose(false)}
           onSchedule={handleSchedule}
         />
