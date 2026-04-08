@@ -1,12 +1,13 @@
 "use client";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
+import CommandPalette from "./CommandPalette";
 import {
   Mail, CheckCircle2, RefreshCw, Plus, Sparkles, Inbox,
   Eye, PenLine, Loader2, X, Check, Clock, Search,
   ArrowLeft, Star, Archive, Settings, MoreHorizontal,
   AlertCircle, LogOut, Send, Edit3, ChevronDown,
-  Zap, CornerDownRight, WifiOff, BellOff, Calendar, CalendarClock
+  Zap, CornerDownRight, WifiOff
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -26,21 +27,6 @@ function saveState(s) {
   } catch {}
 }
 
-const SNOOZE_KEY = "orbital-snoozed";
-const SCHEDULED_KEY = "orbital-scheduled";
-function loadSnoozed() {
-  try { if (typeof window === "undefined") return []; const r = localStorage.getItem(SNOOZE_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
-}
-function saveSnoozed(items) {
-  try { if (typeof window !== "undefined") localStorage.setItem(SNOOZE_KEY, JSON.stringify(items)); } catch {}
-}
-function loadScheduled() {
-  try { if (typeof window === "undefined") return []; const r = localStorage.getItem(SCHEDULED_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
-}
-function saveScheduled(items) {
-  try { if (typeof window !== "undefined") localStorage.setItem(SCHEDULED_KEY, JSON.stringify(items)); } catch {}
-}
-
 /* ═══════════════════════════════════════════════════════════════════
    CONFIG
    ═══════════════════════════════════════════════════════════════════ */
@@ -50,14 +36,6 @@ const STATUS = {
   fyi:            { label: "FYI",          color: "text-slate-400",  bg: "bg-slate-500/10",   bdr: "border-slate-500/20",  Icon: Eye },
   resolved:       { label: "Done",         color: "text-emerald-400",bg: "bg-emerald-500/10", bdr: "border-emerald-500/20",Icon: CheckCircle2 },
   archived:       { label: "Archived",     color: "text-slate-600",  bg: "bg-slate-800/20",   bdr: "border-slate-700/20",  Icon: Archive },
-};
-
-const AI_CATEGORY = {
-  "needs-reply":       { label: "Needs Reply", color: "text-blue-400",   bg: "bg-blue-500/10",   bdr: "border-blue-500/20"   },
-  "fyi-only":          { label: "FYI",         color: "text-slate-400",  bg: "bg-slate-500/10",  bdr: "border-slate-500/20"  },
-  "waiting-on-others": { label: "Waiting",     color: "text-amber-400",  bg: "bg-amber-500/10",  bdr: "border-amber-500/20"  },
-  "actionable":        { label: "Action",      color: "text-purple-400", bg: "bg-purple-500/10", bdr: "border-purple-500/20" },
-  "promotional":       { label: "Promo",       color: "text-green-400",  bg: "bg-green-500/10",  bdr: "border-green-500/20"  },
 };
 
 const ACCT_COLORS = [
@@ -164,27 +142,6 @@ const DEMO_THREADS = [
     ],
   },
 ];
-
-/* ═══════════════════════════════════════════════════════════════════
-   TIME HELPERS (snooze / schedule)
-   ═══════════════════════════════════════════════════════════════════ */
-function getLaterToday() { return Date.now() + 3 * 60 * 60 * 1000; }
-function getTomorrowMorning() {
-  const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.getTime();
-}
-function getNextMondayMorning() {
-  const d = new Date(); const day = d.getDay();
-  const daysUntil = day === 1 ? 7 : (8 - day) % 7 || 7;
-  d.setDate(d.getDate() + daysUntil); d.setHours(9, 0, 0, 0); return d.getTime();
-}
-function formatSnoozeTime(ts) {
-  const d = new Date(ts); const now = new Date();
-  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
-  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  if (d.toDateString() === now.toDateString()) return `Today at ${time}`;
-  if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow at ${time}`;
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + ` at ${time}`;
-}
 
 /* ═══════════════════════════════════════════════════════════════════
    HELPERS
@@ -341,221 +298,6 @@ function Spinner({ size = 16 }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   SNOOZE MENU
-   ═══════════════════════════════════════════════════════════════════ */
-function SnoozeMenu({ onSnooze, onClose }) {
-  const [showCustom, setShowCustom] = useState(false);
-  const [customDate, setCustomDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; });
-  const [customTime, setCustomTime] = useState("09:00");
-  const menuRef = useRef(null);
-  useEffect(() => {
-    function outside(e) { if (menuRef.current && !menuRef.current.contains(e.target)) onClose(); }
-    document.addEventListener("mousedown", outside);
-    return () => document.removeEventListener("mousedown", outside);
-  }, [onClose]);
-  function handleCustom() {
-    const d = new Date(customDate + "T" + customTime);
-    if (isNaN(d.getTime()) || d.getTime() <= Date.now()) return;
-    onSnooze(d.getTime());
-  }
-  const opts = [
-    { label: "Later today",       sub: "In 3 hours",       ts: getLaterToday() },
-    { label: "Tomorrow morning",  sub: "9:00 AM",          ts: getTomorrowMorning() },
-    { label: "Next week",         sub: "Monday 9:00 AM",   ts: getNextMondayMorning() },
-  ];
-  return (
-    <div ref={menuRef} className="absolute right-0 top-10 z-50 bg-[#1a1c22] border border-[#2a2d38] rounded-xl shadow-2xl py-1.5 w-56 anim-scale">
-      <p className="px-3 py-1 text-[10px] font-bold text-[#3a3f4c] uppercase tracking-widest">Snooze until…</p>
-      {opts.map(o => (
-        <button key={o.label} onClick={() => onSnooze(o.ts)}
-          className="w-full flex items-center justify-between px-3 py-2.5 text-[13px] hover:bg-[#22252e] transition-colors text-[#7a7f8e] hover:text-[#c8ccd4]">
-          <span>{o.label}</span>
-          <span className="text-[10px] text-[#3a3f4c]">{o.sub}</span>
-        </button>
-      ))}
-      <div className="mx-3 mt-1 pt-1 border-t border-[#1e2028]">
-        {!showCustom ? (
-          <button onClick={() => setShowCustom(true)}
-            className="w-full flex items-center gap-2 py-2.5 text-[13px] text-[#7a7f8e] hover:text-[#c8ccd4] transition-colors">
-            <Calendar size={12} className="flex-shrink-0" />Custom date &amp; time
-          </button>
-        ) : (
-          <div className="py-2 space-y-2">
-            <input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} min={new Date().toISOString().split("T")[0]}
-              className="w-full bg-[#111318] border border-[#2a2d38] rounded-lg px-2.5 py-1.5 text-[12px] text-[#c8ccd4] focus:outline-none focus:border-[#3a4050]" />
-            <input type="time" value={customTime} onChange={e => setCustomTime(e.target.value)}
-              className="w-full bg-[#111318] border border-[#2a2d38] rounded-lg px-2.5 py-1.5 text-[12px] text-[#c8ccd4] focus:outline-none focus:border-[#3a4050]" />
-            <button onClick={handleCustom}
-              className="w-full py-2 rounded-lg bg-[#5B8EF8] text-white text-[12px] font-semibold hover:bg-[#4a7def] transition-colors">
-              Snooze
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   SCHEDULE MENU
-   ═══════════════════════════════════════════════════════════════════ */
-function ScheduleMenu({ onSchedule, onClose }) {
-  const [showCustom, setShowCustom] = useState(false);
-  const [customDate, setCustomDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; });
-  const [customTime, setCustomTime] = useState("09:00");
-  const menuRef = useRef(null);
-  useEffect(() => {
-    function outside(e) { if (menuRef.current && !menuRef.current.contains(e.target)) onClose(); }
-    document.addEventListener("mousedown", outside);
-    return () => document.removeEventListener("mousedown", outside);
-  }, [onClose]);
-  function handleCustom() {
-    const d = new Date(customDate + "T" + customTime);
-    if (isNaN(d.getTime()) || d.getTime() <= Date.now()) return;
-    onSchedule(d.getTime());
-  }
-  const opts = [
-    { label: "Send later today",        sub: "In 3 hours",       ts: getLaterToday() },
-    { label: "Send tomorrow morning",   sub: "9:00 AM",          ts: getTomorrowMorning() },
-    { label: "Send Monday morning",     sub: "9:00 AM",          ts: getNextMondayMorning() },
-  ];
-  return (
-    <div ref={menuRef} className="absolute right-0 bottom-12 z-50 bg-[#1a1c22] border border-[#2a2d38] rounded-xl shadow-2xl py-1.5 w-60 anim-scale">
-      <p className="px-3 py-1 text-[10px] font-bold text-[#3a3f4c] uppercase tracking-widest">Schedule send…</p>
-      {opts.map(o => (
-        <button key={o.label} onClick={() => onSchedule(o.ts)}
-          className="w-full flex items-center justify-between px-3 py-2.5 text-[13px] hover:bg-[#22252e] transition-colors text-[#7a7f8e] hover:text-[#c8ccd4]">
-          <span>{o.label}</span>
-          <span className="text-[10px] text-[#3a3f4c]">{o.sub}</span>
-        </button>
-      ))}
-      <div className="mx-3 mt-1 pt-1 border-t border-[#1e2028]">
-        {!showCustom ? (
-          <button onClick={() => setShowCustom(true)}
-            className="w-full flex items-center gap-2 py-2.5 text-[13px] text-[#7a7f8e] hover:text-[#c8ccd4] transition-colors">
-            <Calendar size={12} className="flex-shrink-0" />Pick date &amp; time
-          </button>
-        ) : (
-          <div className="py-2 space-y-2">
-            <input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} min={new Date().toISOString().split("T")[0]}
-              className="w-full bg-[#111318] border border-[#2a2d38] rounded-lg px-2.5 py-1.5 text-[12px] text-[#c8ccd4] focus:outline-none focus:border-[#3a4050]" />
-            <input type="time" value={customTime} onChange={e => setCustomTime(e.target.value)}
-              className="w-full bg-[#111318] border border-[#2a2d38] rounded-lg px-2.5 py-1.5 text-[12px] text-[#c8ccd4] focus:outline-none focus:border-[#3a4050]" />
-            <button onClick={handleCustom}
-              className="w-full py-2 rounded-lg bg-[#5B8EF8] text-white text-[12px] font-semibold hover:bg-[#4a7def] transition-colors">
-              Schedule
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   SNOOZED PANEL
-   ═══════════════════════════════════════════════════════════════════ */
-function SnoozedPanel({ snoozedThreads, accounts, onUnsnooze }) {
-  return (
-    <div className="flex flex-col h-full bg-[#0c0d10]">
-      <div className="px-4 pt-4 pb-3 border-b border-[#1e2028] flex-shrink-0">
-        <h2 className="text-[14px] font-semibold text-[#e2e4e9] tracking-tight">Snoozed</h2>
-        <p className="text-[11px] text-[#3a3f4c] mt-0.5">Threads return to inbox when the time arrives.</p>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {snoozedThreads.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 px-6 text-center">
-            <BellOff size={20} className="text-[#2e3240] mb-2" />
-            <p className="text-sm font-medium text-[#3a3f4c]">No snoozed threads</p>
-          </div>
-        ) : snoozedThreads.map(item => {
-          const acct = accounts.find(a => a.id === item.thread.accountId);
-          const sender = item.thread.participants[0];
-          return (
-            <div key={item.threadId} className="flex items-start gap-3 px-4 py-3.5 border-b border-[#171920] hover:bg-[#14161e] transition-colors">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  {acct && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: acct.color }} />}
-                  <span className="text-[13px] font-medium text-[#7a7f8e] truncate">{sender?.name || sender?.email}</span>
-                </div>
-                <p className="text-[12px] text-[#5c6270] truncate">{item.thread.subject}</p>
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <Clock size={10} className="text-amber-400 flex-shrink-0" />
-                  <span className="text-[11px] text-amber-400">{formatSnoozeTime(item.snoozeUntil)}</span>
-                </div>
-              </div>
-              <button onClick={() => onUnsnooze(item.threadId)}
-                className="text-[11px] text-[#3a3f4c] hover:text-[#8b8f9a] transition-colors px-2 py-1 rounded-lg hover:bg-[#1e2028] flex-shrink-0 mt-0.5">
-                Unsnooze
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   SCHEDULED PANEL
-   ═══════════════════════════════════════════════════════════════════ */
-function ScheduledPanel({ scheduledMessages, onCancel }) {
-  const pending = scheduledMessages.filter(m => m.status === "pending");
-  const recent = scheduledMessages.filter(m => m.status !== "pending").slice(-5).reverse();
-  return (
-    <div className="flex flex-col h-full bg-[#0c0d10]">
-      <div className="px-4 pt-4 pb-3 border-b border-[#1e2028] flex-shrink-0">
-        <h2 className="text-[14px] font-semibold text-[#e2e4e9] tracking-tight">Scheduled</h2>
-        <p className="text-[11px] text-[#3a3f4c] mt-0.5">Messages queued to send automatically.</p>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {pending.length === 0 && recent.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 px-6 text-center">
-            <CalendarClock size={20} className="text-[#2e3240] mb-2" />
-            <p className="text-sm font-medium text-[#3a3f4c]">No scheduled messages</p>
-          </div>
-        ) : (
-          <>
-            {pending.map(msg => (
-              <div key={msg.id} className="flex items-start gap-3 px-4 py-3.5 border-b border-[#171920] hover:bg-[#14161e] transition-colors">
-                <div className="flex-1 min-w-0">
-                  <p className="text-[12px] font-medium text-[#b0b4be] truncate">{msg.subject}</p>
-                  <p className="text-[11px] text-[#5c6270] truncate">To: {msg.to}</p>
-                  <div className="flex items-center gap-1.5 mt-1.5">
-                    <CalendarClock size={10} className="text-[#5B8EF8] flex-shrink-0" />
-                    <span className="text-[11px] text-[#5B8EF8]">{formatSnoozeTime(msg.scheduledAt)}</span>
-                  </div>
-                </div>
-                <button onClick={() => onCancel(msg.id)}
-                  className="text-[11px] text-[#3a3f4c] hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-[#1e2028] flex-shrink-0 mt-0.5">
-                  Cancel
-                </button>
-              </div>
-            ))}
-            {recent.length > 0 && (
-              <div className="px-4 pt-3">
-                <p className="text-[10px] font-bold text-[#2e3240] uppercase tracking-widest mb-2">Recent</p>
-                {recent.map(msg => (
-                  <div key={msg.id} className="flex items-start gap-3 py-2.5 border-b border-[#171920]">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] text-[#4a4f5c] truncate">{msg.subject}</p>
-                      <p className="text-[11px] text-[#3a3f4c] truncate">To: {msg.to}</p>
-                    </div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold flex-shrink-0 ${
-                      msg.status === "sent" ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/10" : "text-red-400 border-red-500/20 bg-red-500/10"
-                    }`}>{msg.status === "sent" ? "Sent" : "Failed"}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════
    SIGN-IN VIEW
    ═══════════════════════════════════════════════════════════════════ */
 function SignInView({ onDemo }) {
@@ -617,18 +359,16 @@ function SignInView({ onDemo }) {
 /* ═══════════════════════════════════════════════════════════════════
    SIDEBAR (desktop)
    ═══════════════════════════════════════════════════════════════════ */
-function Sidebar({ accounts, activeAccountId, onSelectAccount, onAddAccount, filter, onSetFilter, view, onSetView, session, snoozedCount, scheduledCount }) {
+function Sidebar({ accounts, activeAccountId, onSelectAccount, onAddAccount, filter, onSetFilter, view, onSetView, session }) {
   const [expanded, setExpanded] = useState(true);
 
   const NAV = [
-    { id: "all",            Icon: Inbox,         label: "All Mail" },
-    { id: "needs_response", Icon: PenLine,       label: "Needs Reply" },
-    { id: "waiting",        Icon: Clock,         label: "Waiting" },
-    { id: "starred",        Icon: Star,          label: "Starred" },
-    { id: "resolved",       Icon: CheckCircle2,  label: "Done" },
-    { id: "archived",       Icon: Archive,       label: "Archived" },
-    { id: "snoozed",        Icon: BellOff,       label: "Snoozed",   count: snoozedCount },
-    { id: "scheduled",      Icon: CalendarClock, label: "Scheduled", count: scheduledCount },
+    { id: "all",            Icon: Inbox,        label: "All Mail" },
+    { id: "needs_response", Icon: PenLine,      label: "Needs Reply" },
+    { id: "waiting",        Icon: Clock,        label: "Waiting" },
+    { id: "starred",        Icon: Star,         label: "Starred" },
+    { id: "resolved",       Icon: CheckCircle2, label: "Done" },
+    { id: "archived",       Icon: Archive,      label: "Archived" },
   ];
 
   return (
@@ -643,7 +383,7 @@ function Sidebar({ accounts, activeAccountId, onSelectAccount, onAddAccount, fil
 
       {/* Navigation */}
       <nav className="px-2 space-y-0.5 flex-shrink-0">
-        {NAV.map(({ id, Icon, label, count }) => {
+        {NAV.map(({ id, Icon, label }) => {
           const active = filter === id && view !== "settings";
           return (
             <button
@@ -653,10 +393,7 @@ function Sidebar({ accounts, activeAccountId, onSelectAccount, onAddAccount, fil
                 ${active ? "bg-[#1a1f2e] text-[#5B8EF8]" : "text-[#6b7280] hover:text-[#b0b4be] hover:bg-[#16181f]"}`}
             >
               <Icon size={14} className="flex-shrink-0" />
-              <span className="flex-1">{label}</span>
-              {count > 0 && (
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? "bg-[#5B8EF8]/20 text-[#5B8EF8]" : "bg-[#1e2028] text-[#4a4f5c]"}`}>{count}</span>
-              )}
+              {label}
             </button>
           );
         })}
@@ -771,15 +508,10 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
           {thread.subject}
         </p>
 
-        {/* Row 3: preview + AI/status badge */}
+        {/* Row 3: preview + badge */}
         <div className="flex items-center gap-2 mt-1.5">
           <p className="text-[11px] text-[#3a3f4c] truncate flex-1">{thread.preview}</p>
-          {thread.aiCategory && AI_CATEGORY[thread.aiCategory] && (
-            <span className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold border ${AI_CATEGORY[thread.aiCategory].color} ${AI_CATEGORY[thread.aiCategory].bg} ${AI_CATEGORY[thread.aiCategory].bdr}`}>
-              {AI_CATEGORY[thread.aiCategory].label}
-            </span>
-          )}
-          {!thread.aiCategory && thread.status !== "needs_response" && (
+          {thread.status !== "needs_response" && (
             <StatusBadge status={thread.status} size="xs" />
           )}
         </div>
@@ -807,16 +539,11 @@ function ThreadListPanel({
   aiSearch, onToggleAiSearch, activeSearchQuery, onClearSearch,
 }) {
   const CHIPS = [
-    { id: "all",                   label: "All" },
-    { id: "needs_response",        label: "Reply" },
-    { id: "waiting",               label: "Waiting" },
-    { id: "resolved",              label: "Done" },
-    { id: "starred",               label: "Starred" },
-    { id: "ai:needs-reply",        label: "AI Reply",   ai: true },
-    { id: "ai:fyi-only",           label: "FYI",        ai: true },
-    { id: "ai:waiting-on-others",  label: "AI Waiting", ai: true },
-    { id: "ai:actionable",         label: "Action",     ai: true },
-    { id: "ai:promotional",        label: "Promo",      ai: true },
+    { id: "all",            label: "All" },
+    { id: "needs_response", label: "Reply" },
+    { id: "waiting",        label: "Waiting" },
+    { id: "resolved",       label: "Done" },
+    { id: "starred",        label: "Starred" },
   ];
 
   const isSearchMode = searchResults !== null;
@@ -824,9 +551,8 @@ function ThreadListPanel({
   const visible = useMemo(() => {
     if (isSearchMode) return searchResults || [];
     let t = [...threads];
-    if (filter === "starred")             t = t.filter(x => x.starred);
-    else if (filter === "archived")       t = t.filter(x => x.status === "archived");
-    else if (filter.startsWith("ai:"))    t = t.filter(x => x.aiCategory === filter.slice(3));
+    if (filter === "starred")          t = t.filter(x => x.starred);
+    else if (filter === "archived")    t = t.filter(x => x.status === "archived");
     else if (filter !== "all" && STATUS[filter]) t = t.filter(x => x.status === filter);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -843,11 +569,6 @@ function ThreadListPanel({
     all: "All Mail", needs_response: "Needs Reply",
     waiting: "Waiting", starred: "Starred",
     resolved: "Done", archived: "Archived",
-    "ai:needs-reply": "Needs Reply (AI)",
-    "ai:fyi-only": "FYI (AI)",
-    "ai:waiting-on-others": "Waiting (AI)",
-    "ai:actionable": "Action Items (AI)",
-    "ai:promotional": "Promotional (AI)",
   };
 
   function handleSearchKeyDown(e) {
@@ -957,19 +678,16 @@ function ThreadListPanel({
                 <Sparkles size={9} />AI on
               </span>
             )}
-            {CHIPS.map(({ id, label, ai }) => (
+            {CHIPS.map(({ id, label }) => (
               <button
                 key={id}
                 onClick={() => onSetFilter(id)}
                 className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors
                   ${filter === id
                     ? "bg-[#1a2a4a] text-[#5B8EF8] border border-blue-500/25"
-                    : ai
-                      ? "text-[#4a3f6b] hover:text-[#7B5CF8] border border-[#2a1f40]"
-                      : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
+                    : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
                   }`}
               >
-                {ai && <Sparkles size={8} className="inline mr-1 opacity-70" />}
                 {label}
               </button>
             ))}
@@ -1049,6 +767,18 @@ function ReplyBox({ thread, accounts, isDemo, isOnline = true }) {
   const replyTo = lastMsg?.from?.email;
 
   useEffect(() => { if (open) textareaRef.current?.focus(); }, [open]);
+
+  // Listen for command-palette triggered actions
+  useEffect(() => {
+    function onOpenReply()   { setOpen(true); }
+    function onOpenAIDraft() { handleGenerate(); }
+    window.addEventListener("orbital:openReply",   onOpenReply);
+    window.addEventListener("orbital:openAIDraft", onOpenAIDraft);
+    return () => {
+      window.removeEventListener("orbital:openReply",   onOpenReply);
+      window.removeEventListener("orbital:openAIDraft", onOpenAIDraft);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleGenerate() {
     setOpen(true);
@@ -1209,18 +939,15 @@ function ReplyBox({ thread, accounts, isDemo, isOnline = true }) {
 /* ═══════════════════════════════════════════════════════════════════
    THREAD DETAIL
    ═══════════════════════════════════════════════════════════════════ */
-function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, onSnooze, isMobile, isDemo, isOnline = true }) {
-  const [menuOpen,   setMenuOpen]   = useState(false);
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
-  const menuRef   = useRef(null);
-  const snoozeRef = useRef(null);
+function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, isMobile, isDemo, isOnline = true }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef  = useRef(null);
   const acct     = accounts.find(a => a.id === thread.accountId);
   const acctEmails = accounts.map(a => a.email);
 
   useEffect(() => {
     function onClickOutside(e) {
       if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
-      if (snoozeRef.current && !snoozeRef.current.contains(e.target)) setSnoozeOpen(false);
     }
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
@@ -1257,22 +984,6 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
           >
             <Star size={14} className={thread.starred ? "text-amber-400 fill-amber-400" : "text-[#3a3f4c] hover:text-[#6b7280]"} />
           </button>
-
-          <div ref={snoozeRef} className="relative">
-            <button
-              onClick={() => setSnoozeOpen(v => !v)}
-              className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[#16181f] transition-colors"
-              title="Snooze (h)"
-            >
-              <BellOff size={14} className={snoozeOpen ? "text-amber-400" : "text-[#3a3f4c] hover:text-[#6b7280]"} />
-            </button>
-            {snoozeOpen && (
-              <SnoozeMenu
-                onSnooze={ts => { onSnooze(thread.id, ts); setSnoozeOpen(false); }}
-                onClose={() => setSnoozeOpen(false)}
-              />
-            )}
-          </div>
 
           <div ref={menuRef} className="relative">
             <button
@@ -1361,16 +1072,14 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
 /* ═══════════════════════════════════════════════════════════════════
    COMPOSE MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }) {
-  const [to,           setTo]           = useState("");
-  const [subject,      setSubject]      = useState("");
-  const [body,         setBody]         = useState("");
-  const [acctId,       setAcctId]       = useState(accounts[0]?.id || "");
-  const [sending,      setSending]      = useState(false);
-  const [sent,         setSent]         = useState(false);
-  const [error,        setError]        = useState(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [scheduledFor, setScheduledFor] = useState(null);
+function ComposeModal({ accounts, isDemo, isOnline = true, onClose }) {
+  const [to,       setTo]       = useState("");
+  const [subject,  setSubject]  = useState("");
+  const [body,     setBody]     = useState("");
+  const [acctId,   setAcctId]   = useState(accounts[0]?.id || "");
+  const [sending,  setSending]  = useState(false);
+  const [sent,     setSent]     = useState(false);
+  const [error,    setError]    = useState(null);
 
   const acct = accounts.find(a => a.id === acctId);
 
@@ -1383,7 +1092,7 @@ function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }
       const res = await fetch("/api/gmail/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, subject, body, fromEmail: acct?.email }),
+        body: JSON.stringify({ to, subject, body }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -1397,25 +1106,16 @@ function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }
     }
   }
 
-  function handleScheduleSend(scheduledAt) {
-    if (!to.trim() || !subject.trim() || !body.trim()) return;
-    setScheduledFor(scheduledAt);
-    onSchedule({ to, subject, body, fromEmail: acct?.email, scheduledAt });
-    setSent(true);
-    setTimeout(onClose, 2000);
-  }
-
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full sm:max-w-lg bg-[#111318] border border-[#1e2028] sm:rounded-2xl shadow-2xl flex flex-col anim-slide-up sm:max-h-[85vh] max-h-[90vh]">
         {sent ? (
           <div className="flex flex-col items-center justify-center py-12 px-8 gap-3 anim-fade">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${scheduledFor ? "bg-blue-500/15 border border-blue-500/20" : "bg-emerald-500/15 border border-emerald-500/20"}`}>
-              {scheduledFor ? <CalendarClock size={22} className="text-[#5B8EF8]" /> : <CheckCircle2 size={22} className="text-emerald-400" />}
+            <div className="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center">
+              <CheckCircle2 size={22} className="text-emerald-400" />
             </div>
-            <p className="text-[15px] font-semibold text-[#e2e4e9]">{scheduledFor ? "Message scheduled" : "Message sent"}</p>
-            {scheduledFor && <p className="text-[12px] text-[#5c6270]">{formatSnoozeTime(scheduledFor)}</p>}
+            <p className="text-[15px] font-semibold text-[#e2e4e9]">Message sent</p>
           </div>
         ) : (
           <>
@@ -1484,33 +1184,15 @@ function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }
               <button onClick={onClose} className="text-[13px] text-[#4a4f5c] hover:text-[#8b8f9a] transition-colors min-h-[44px] px-2">
                 Discard
               </button>
-              <div className="flex items-center relative">
-                <button
-                  onClick={handleSend}
-                  disabled={sending || !to.trim() || !subject.trim() || !body.trim() || !isOnline}
-                  title={!isOnline ? "Connect to internet to send" : undefined}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl rounded-r-none bg-[#5B8EF8] text-white text-[13px] font-semibold hover:bg-[#4a7def] active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px]"
-                >
-                  {sending ? <Spinner size={14} /> : <Send size={13} />}
-                  {sending ? "Sending…" : "Send"}
-                </button>
-                <div className="relative">
-                  <button
-                    onClick={() => setScheduleOpen(v => !v)}
-                    disabled={sending || !to.trim() || !subject.trim() || !body.trim()}
-                    title="Schedule send"
-                    className="flex items-center justify-center w-9 min-h-[44px] rounded-xl rounded-l-none border-l border-[#4a6dd4] bg-[#5B8EF8] text-white hover:bg-[#4a7def] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <ChevronDown size={14} />
-                  </button>
-                  {scheduleOpen && (
-                    <ScheduleMenu
-                      onSchedule={ts => { setScheduleOpen(false); handleScheduleSend(ts); }}
-                      onClose={() => setScheduleOpen(false)}
-                    />
-                  )}
-                </div>
-              </div>
+              <button
+                onClick={handleSend}
+                disabled={sending || !to.trim() || !subject.trim() || !body.trim() || !isOnline}
+                title={!isOnline ? "Connect to internet to send" : undefined}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#5B8EF8] text-white text-[13px] font-semibold hover:bg-[#4a7def] active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px]"
+              >
+                {sending ? <Spinner size={14} /> : <Send size={13} />}
+                {sending ? "Sending…" : "Send"}
+              </button>
             </div>
           </>
         )}
@@ -1686,18 +1368,13 @@ export default function Orbital() {
   const [mobilePanel,     setMobilePanel]     = useState("list"); // "list" | "detail"
 
   // UI
-  const [compose,    setCompose]    = useState(false);
-  const [loading,    setLoading]    = useState(false);
+  const [compose,        setCompose]        = useState(false);
+  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
+  const [loading,        setLoading]        = useState(false);
   const [gmailError, setGmailError] = useState(null);
   const [isDemo,     setIsDemo]     = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
   const [isOnline,   setIsOnline]   = useState(true);
-
-  // Snooze & Scheduled Send
-  const [snoozedThreads,    setSnoozedThreads]    = useState(() => loadSnoozed());
-  const [scheduledMessages, setScheduledMessages] = useState(() => loadScheduled());
-  const isDemoRef = useRef(false);
-  useEffect(() => { isDemoRef.current = isDemo; }, [isDemo]);
 
   // Offline queue: {type: "statusChange", id, status}
   const offlineQueue = useRef([]);
@@ -1708,9 +1385,6 @@ export default function Orbital() {
   const [searchLoading,     setSearchLoading]     = useState(false);
   const [searchError,       setSearchError]       = useState(null);
   const [activeSearchQuery, setActiveSearchQuery] = useState("");
-
-  // AI classification cache — persists across refreshes within the session
-  const aiCategoryCache = useRef({});
 
   const activeThread = useMemo(
     () => threads.find(t => t.id === activeId) || null,
@@ -1778,22 +1452,7 @@ export default function Orbital() {
         throw new Error(d.error || `Gmail error ${res.status}`);
       }
       const data = await res.json();
-      const mapped = mapGmailToThreads(data.messages || []);
-
-      // Merge cached AI categories and preserve manual status/starred changes
-      setThreads(prev => {
-        const prevMap = Object.fromEntries(prev.map(t => [t.id, t]));
-        return mapped.map(t => ({
-          ...t,
-          status:     prevMap[t.id]?.status  ?? t.status,
-          starred:    prevMap[t.id]?.starred  ?? t.starred,
-          aiCategory: aiCategoryCache.current[t.id],
-        }));
-      });
-
-      // Classify only threads not already in the cache
-      const toClassify = mapped.filter(t => !aiCategoryCache.current[t.id]);
-      if (toClassify.length > 0) classifyThreads(toClassify);
+      setThreads(mapGmailToThreads(data.messages || []));
     } catch (e) {
       setGmailError(e.message);
     } finally {
@@ -1837,116 +1496,6 @@ export default function Orbital() {
     setSearchLoading(false);
     setActiveSearchQuery("");
     setSearch("");
-  }
-
-  /* ── AI classification ───────────────────────────────── */
-  async function classifyThreads(toClassify) {
-    try {
-      const summaries = toClassify.map(t => ({
-        id:      t.id,
-        sender:  t.participants[0]?.name || t.participants[0]?.email || "",
-        subject: t.subject,
-        snippet: t.preview,
-      }));
-      const res = await fetch("/api/gmail/classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threads: summaries }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.classifications?.length) {
-        data.classifications.forEach(c => {
-          if (c.id && c.category) aiCategoryCache.current[c.id] = c.category;
-        });
-        setThreads(ts => ts.map(t => {
-          const cat = aiCategoryCache.current[t.id];
-          return cat && !t.aiCategory ? { ...t, aiCategory: cat } : t;
-        }));
-      }
-    } catch (err) {
-      console.error("Classification error:", err);
-    }
-  }
-  /* ── Timed items check (snooze returns + scheduled sends) ─── */
-  useEffect(() => {
-    function check() {
-      const now = Date.now();
-      const snoozed = loadSnoozed();
-      const due = snoozed.filter(s => s.snoozeUntil <= now);
-      if (due.length > 0) {
-        const remaining = snoozed.filter(s => s.snoozeUntil > now);
-        saveSnoozed(remaining);
-        setSnoozedThreads(remaining);
-        setThreads(ts => {
-          const ids = new Set(ts.map(t => t.id));
-          const toAdd = due.filter(s => !ids.has(s.thread.id))
-            .map(s => ({ ...s.thread, lastActivityTs: now, lastActivity: "Just now" }));
-          return toAdd.length > 0 ? [...toAdd, ...ts] : ts;
-        });
-      }
-      if (isDemoRef.current) return;
-      const scheduled = loadScheduled();
-      const dueMsgs = scheduled.filter(m => m.status === "pending" && m.scheduledAt <= now);
-      dueMsgs.forEach(msg => {
-        fetch("/api/gmail/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: msg.to, subject: msg.subject, body: msg.body, fromEmail: msg.fromEmail,
-            ...(msg.replyToMessageId ? { replyToMessageId: msg.replyToMessageId } : {}),
-          }),
-        }).then(r => {
-          setScheduledMessages(prev => {
-            const u = prev.map(m => m.id === msg.id ? { ...m, status: r.ok ? "sent" : "failed" } : m);
-            saveScheduled(u); return u;
-          });
-        }).catch(() => {
-          setScheduledMessages(prev => {
-            const u = prev.map(m => m.id === msg.id ? { ...m, status: "failed" } : m);
-            saveScheduled(u); return u;
-          });
-        });
-      });
-    }
-    check();
-    const interval = setInterval(check, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  /* ── Snooze actions ──────────────────────────────────── */
-  function handleSnooze(threadId, snoozeUntil) {
-    const thread = threads.find(t => t.id === threadId);
-    if (!thread) return;
-    const updated = [...snoozedThreads, { threadId, snoozeUntil, thread }];
-    setSnoozedThreads(updated);
-    saveSnoozed(updated);
-    setThreads(ts => ts.filter(t => t.id !== threadId));
-    setActiveId(null);
-    if (mobilePanel === "detail") setMobilePanel("list");
-  }
-
-  function handleUnsnooze(threadId) {
-    const item = snoozedThreads.find(s => s.threadId === threadId);
-    if (!item) return;
-    const remaining = snoozedThreads.filter(s => s.threadId !== threadId);
-    setSnoozedThreads(remaining);
-    saveSnoozed(remaining);
-    setThreads(ts => [{ ...item.thread, lastActivityTs: Date.now(), lastActivity: "Just now" }, ...ts]);
-  }
-
-  /* ── Scheduled send actions ──────────────────────────── */
-  function handleSchedule(msgData) {
-    const msg = { ...msgData, id: `sch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, status: "pending", created: Date.now() };
-    const updated = [...scheduledMessages, msg];
-    setScheduledMessages(updated);
-    saveScheduled(updated);
-  }
-
-  function handleCancelScheduled(id) {
-    const updated = scheduledMessages.filter(m => m.id !== id);
-    setScheduledMessages(updated);
-    saveScheduled(updated);
   }
 
   /* ── Demo ────────────────────────────────────────────── */
@@ -2019,15 +1568,20 @@ export default function Orbital() {
   /* ── Keyboard shortcuts ──────────────────────────────── */
   useEffect(() => {
     function onKey(e) {
+      // Cmd+K / Ctrl+K → open command palette (works from anywhere)
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdPaletteOpen(v => !v);
+        return;
+      }
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
       const sorted = displayedThreads
         .filter(t => filter === "starred" ? t.starred : filter === "all" || t.status === filter)
         .sort((a, b) => b.lastActivityTs - a.lastActivityTs)
         .map(t => t.id);
       if (e.key === "c") { setCompose(true); return; }
-      if (e.key === "Escape") { setCompose(false); return; }
+      if (e.key === "Escape") { setCompose(false); setCmdPaletteOpen(false); return; }
       if (!activeId) return;
-      if (e.key === "h") { handleSnooze(activeId, getTomorrowMorning()); return; }
       const i = sorted.indexOf(activeId);
       if (e.key === "j" && i < sorted.length - 1) handleSelect(sorted[i + 1]);
       if (e.key === "k" && i > 0) handleSelect(sorted[i - 1]);
@@ -2075,8 +1629,6 @@ export default function Orbital() {
             view={view}
             onSetView={setView}
             session={session}
-            snoozedCount={snoozedThreads.length}
-            scheduledCount={scheduledMessages.filter(m => m.status === "pending").length}
           />
         </div>
 
@@ -2108,40 +1660,27 @@ export default function Orbital() {
                 />
 
                 <div className="flex-1 overflow-hidden flex flex-col">
-                  {filter === "snoozed" ? (
-                    <SnoozedPanel
-                      snoozedThreads={snoozedThreads}
-                      accounts={accounts}
-                      onUnsnooze={handleUnsnooze}
-                    />
-                  ) : filter === "scheduled" ? (
-                    <ScheduledPanel
-                      scheduledMessages={scheduledMessages}
-                      onCancel={handleCancelScheduled}
-                    />
-                  ) : (
-                    <ThreadListPanel
-                      threads={displayedThreads}
-                      accounts={accounts}
-                      activeId={activeId}
-                      filter={filter}
-                      onSetFilter={setFilter}
-                      search={search}
-                      onSearch={setSearch}
-                      onSelect={handleSelect}
-                      loading={loading}
-                      onRefresh={isDemo ? () => {} : fetchGmail}
-                      isDemo={isDemo}
-                      onSubmitSearch={performSearch}
-                      searchResults={searchResults}
-                      searchLoading={searchLoading}
-                      searchError={searchError}
-                      aiSearch={aiSearch}
-                      onToggleAiSearch={() => setAiSearch(v => !v)}
-                      activeSearchQuery={activeSearchQuery}
-                      onClearSearch={clearSearch}
-                    />
-                  )}
+                  <ThreadListPanel
+                    threads={displayedThreads}
+                    accounts={accounts}
+                    activeId={activeId}
+                    filter={filter}
+                    onSetFilter={setFilter}
+                    search={search}
+                    onSearch={setSearch}
+                    onSelect={handleSelect}
+                    loading={loading}
+                    onRefresh={isDemo ? () => {} : fetchGmail}
+                    isDemo={isDemo}
+                    onSubmitSearch={performSearch}
+                    searchResults={searchResults}
+                    searchLoading={searchLoading}
+                    searchError={searchError}
+                    aiSearch={aiSearch}
+                    onToggleAiSearch={() => setAiSearch(v => !v)}
+                    activeSearchQuery={activeSearchQuery}
+                    onClearSearch={clearSearch}
+                  />
                 </div>
 
                 <MobileBottomNav
@@ -2166,7 +1705,6 @@ export default function Orbital() {
                     onBack={() => setMobilePanel("list")}
                     onStatusChange={handleStatusChange}
                     onToggleStar={handleToggleStar}
-                    onSnooze={handleSnooze}
                     isMobile={isMobileDetail}
                     isDemo={isDemo}
                     isOnline={isOnline}
@@ -2178,12 +1716,21 @@ export default function Orbital() {
                     </div>
                     <p className="text-[14px] font-semibold text-[#2e3240]">Select a thread</p>
                     <p className="text-[12px] text-[#1e2028] mt-1 mb-6">Choose a conversation to read it here</p>
-                    <div className="flex items-center gap-2 text-[11px] text-[#2a2d38]">
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">c</kbd>
-                      <span>to compose</span>
-                      <span className="mx-1">·</span>
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">j/k</kbd>
-                      <span>to navigate</span>
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="flex items-center gap-2 text-[11px] text-[#2a2d38]">
+                        <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">c</kbd>
+                        <span>to compose</span>
+                        <span className="mx-1">·</span>
+                        <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">j/k</kbd>
+                        <span>to navigate</span>
+                      </div>
+                      <button
+                        onClick={() => setCmdPaletteOpen(true)}
+                        className="flex items-center gap-1.5 text-[11px] text-[#2a2d38] hover:text-[#5B8EF8] transition-colors"
+                      >
+                        <kbd className="px-1.5 py-0.5 rounded bg-[#16181f] border border-[#2a2d38] font-mono">⌘K</kbd>
+                        <span>command palette</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -2234,9 +1781,32 @@ export default function Orbital() {
           isDemo={isDemo}
           isOnline={isOnline}
           onClose={() => setCompose(false)}
-          onSchedule={handleSchedule}
         />
       )}
+
+      {/* Command palette */}
+      <CommandPalette
+        isOpen={cmdPaletteOpen}
+        onClose={() => setCmdPaletteOpen(false)}
+        accounts={accounts}
+        activeThread={activeThread}
+        threads={threads}
+        onSetFilter={f => { setFilter(f); setActiveAccountId(null); }}
+        onSetView={setView}
+        onSetCompose={setCompose}
+        onStatusChange={handleStatusChange}
+        onToggleStar={handleToggleStar}
+        onSelectAccount={id => setActiveAccountId(id)}
+      />
+
+      {/* ⌘K discovery hint — bottom-left corner (desktop only) */}
+      <button
+        onClick={() => setCmdPaletteOpen(true)}
+        className="fixed bottom-6 left-6 hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#111318] border border-[#1e2028] text-[#3a3f4c] hover:text-[#6b7280] hover:border-[#2a2d38] transition-all text-[11px] z-20"
+        title="Open command palette"
+      >
+        <kbd className="font-mono text-[10px]">⌘K</kbd>
+      </button>
     </>
   );
 }
