@@ -222,22 +222,21 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
   });
 }
 
-async function generateDraft(thread, accounts) {
+async function generateDraft(thread, accounts, tone = "professional") {
   const acct = accounts.find(a => a.id === thread.accountId);
-  const hist = thread.messages
-    .map(m => `${m.from.name} (${m.time}):\n${m.body}`)
-    .join("\n\n---\n\n");
-  const sys = `You are an AI drafting assistant for ${acct?.name || "the user"} (${acct?.email || ""}).
-Draft a professional, warm reply to the last message in this email thread.
-Style: direct, concise, addresses every question. Open with a greeting and close with "Best, ${acct?.name?.split(" ")[0] || ""}".
-Respond ONLY with the draft — no preamble or meta-commentary.`;
   try {
     const r = await fetch("/api/draft", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        system: sys,
-        messages: [{ role: "user", content: `Thread:\n\n${hist}\n\nDraft a reply.` }],
+        threadMessages: thread.messages.map(m => ({
+          from: { name: m.from.name, email: m.from.email },
+          time: m.time,
+          body: m.body,
+        })),
+        userName: acct?.name || "",
+        userEmail: acct?.email || "",
+        tone,
       }),
     });
     const d = await r.json();
@@ -668,6 +667,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
   const [sent,    setSent]    = useState(false);
   const [error,   setError]   = useState(null);
   const [aiUsed,  setAiUsed]  = useState(false);
+  const [tone,    setTone]    = useState("professional");
   const textareaRef = useRef(null);
 
   const acct    = accounts.find(a => a.id === thread.accountId);
@@ -680,7 +680,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
     setOpen(true);
     setDrafting(true);
     setAiUsed(true);
-    const draft = await generateDraft(thread, accounts);
+    const draft = await generateDraft(thread, accounts, tone);
     setBody(draft);
     setDrafting(false);
     setTimeout(() => textareaRef.current?.focus(), 50);
@@ -774,7 +774,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
       {drafting ? (
         <div className="flex items-center gap-3 px-4 py-5 text-[13px] text-[#5c6270]">
           <Spinner size={15} />
-          <span>Drafting reply…</span>
+          <span>Drafting {tone} reply…</span>
         </div>
       ) : (
         <>
@@ -792,13 +792,30 @@ function ReplyBox({ thread, accounts, isDemo }) {
             </div>
           )}
           <div className="flex items-center justify-between px-4 py-3 border-t border-[#1a1c22]">
-            <button
-              onClick={handleGenerate}
-              className="flex items-center gap-1.5 text-[12px] text-[#5B8EF8] hover:text-[#7aaafe] transition-colors min-h-[36px] px-1"
-            >
-              <Sparkles size={12} />
-              {aiUsed ? "Regenerate" : "Draft with AI"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleGenerate}
+                className="flex items-center gap-1.5 text-[12px] text-[#5B8EF8] hover:text-[#7aaafe] transition-colors min-h-[36px] px-1"
+              >
+                <Sparkles size={12} />
+                {aiUsed ? "Regenerate" : "Draft with AI"}
+              </button>
+              <div className="flex items-center gap-0.5 pl-2 border-l border-[#1e2028]">
+                {["professional", "casual", "brief"].map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setTone(t)}
+                    className={`px-2 py-1 rounded text-[10px] font-medium capitalize transition-colors ${
+                      tone === t
+                        ? "bg-blue-500/15 text-[#5B8EF8] border border-blue-500/30"
+                        : "text-[#3a3f4c] hover:text-[#5c6270] border border-transparent"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               onClick={handleSend}
               disabled={sending || !body.trim()}
