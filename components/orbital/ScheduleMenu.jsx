@@ -8,7 +8,7 @@ import {
   getTomorrowMorning,
 } from "./helpers";
 
-export default function ScheduleMenu({ onSchedule, onClose }) {
+export default function ScheduleMenu({ onSchedule, onClose, triggerRef }) {
   const [showCustom, setShowCustom] = useState(false);
   const [customDate, setCustomDate] = useState(() => {
     const date = new Date();
@@ -20,14 +20,21 @@ export default function ScheduleMenu({ onSchedule, onClose }) {
 
   useEffect(() => {
     function handleOutside(event) {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
+      // Ignore clicks inside the menu itself or on the trigger button.
+      // Without the trigger check, clicking the chevron fires pointerdown
+      // here (closing the menu) and then click on the button (re-opening it).
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(event.target) &&
+        (!triggerRef?.current || !triggerRef.current.contains(event.target))
+      ) {
         onClose();
       }
     }
 
     document.addEventListener("pointerdown", handleOutside);
     return () => document.removeEventListener("pointerdown", handleOutside);
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   function handleCustom() {
     const date = new Date(`${customDate}T${customTime}`);

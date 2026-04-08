@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CalendarClock,
@@ -34,6 +34,7 @@ export default function ComposeModal({
   const [error, setError] = useState(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduledFor, setScheduledFor] = useState(null);
+  const scheduleButtonRef = useRef(null);
 
   useEffect(() => {
     setTo(initialTo);
@@ -219,6 +220,7 @@ export default function ComposeModal({
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative">
                   <button
+                    ref={scheduleButtonRef}
                     onClick={() => setScheduleOpen((value) => !value)}
                     disabled={sending || !isOnline}
                     title="Schedule send"
@@ -230,6 +232,7 @@ export default function ComposeModal({
                   </button>
                   {scheduleOpen ? (
                     <ScheduleMenu
+                      triggerRef={scheduleButtonRef}
                       onSchedule={(timestamp) => {
                         setScheduleOpen(false);
                         handleScheduleSend(timestamp);
