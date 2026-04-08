@@ -1,4 +1,4 @@
-const CACHE_NAME = 'orbital-v1';
+const CACHE_NAME = 'orbital-v2';
 
 // App shell resources to cache on install
 const APP_SHELL = [

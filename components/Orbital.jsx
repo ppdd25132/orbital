@@ -209,6 +209,26 @@ function stripHtmlAndDecode(str) {
   ).trim();
 }
 
+function isHtmlBody(str) {
+  if (!str) return false;
+  const trimmed = str.trimStart();
+  return /^<(!doctype\s+html|html[\s>])/i.test(trimmed) || /<html[\s>]/i.test(trimmed);
+}
+
+function linkifyText(text) {
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return escaped.replace(
+    /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g,
+    (url) => {
+      const href = url.startsWith('www.') ? `https://${url}` : url;
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#5B8EF8;text-decoration:underline">${url}</a>`;
+    }
+  );
+}
+
 function initials(name = "") {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
@@ -249,17 +269,22 @@ function mapGmailToThreads(messages, accountId = "gmail-real") {
       lastActivity, lastActivityTs: new Date(last.date).getTime(),
       preview: decodeHTMLEntities(last.snippet || ""),
       participants: Array.from(participantSet.values()),
-      messages: msgs.map(m => ({
-        id: m.id,
-        from: {
-          name:  m.from?.split("<")[0]?.trim().replace(/"/g, "") || m.from || "Unknown",
-          email: m.from?.match(/<(.+?)>/)?.[1] || m.from || "",
-        },
-        time: new Date(m.date).toLocaleDateString("en-US", {
-          month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-        }),
-        body: stripHtmlAndDecode(m.body || m.snippet || ""),
-      })),
+      messages: msgs.map(m => {
+        const raw = m.body || m.snippet || "";
+        const bodyIsHtml = isHtmlBody(raw);
+        return {
+          id: m.id,
+          from: {
+            name:  m.from?.split("<")[0]?.trim().replace(/"/g, "") || m.from || "Unknown",
+            email: m.from?.match(/<(.+?)>/)?.[1] || m.from || "",
+          },
+          time: new Date(m.date).toLocaleDateString("en-US", {
+            month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+          }),
+          body: bodyIsHtml ? raw : stripHtmlAndDecode(raw),
+          bodyIsHtml,
+        };
+      }),
     };
   });
 }
@@ -392,16 +417,20 @@ function SnoozeMenu({ onSnooze, onClose }) {
 /* ═══════════════════════════════════════════════════════════════════
    SCHEDULE MENU
    ═══════════════════════════════════════════════════════════════════ */
-function ScheduleMenu({ onSchedule, onClose }) {
+function ScheduleMenu({ onSchedule, onClose, triggerRef }) {
   const [showCustom, setShowCustom] = useState(false);
   const [customDate, setCustomDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; });
   const [customTime, setCustomTime] = useState("09:00");
   const menuRef = useRef(null);
   useEffect(() => {
-    function outside(e) { if (menuRef.current && !menuRef.current.contains(e.target)) onClose(); }
+    function outside(e) {
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      const inTrigger = triggerRef?.current && triggerRef.current.contains(e.target);
+      if (!inMenu && !inTrigger) onClose();
+    }
     document.addEventListener("mousedown", outside);
     return () => document.removeEventListener("mousedown", outside);
-  }, [onClose]);
+  }, [onClose, triggerRef]);
   function handleCustom() {
     const d = new Date(customDate + "T" + customTime);
     if (isNaN(d.getTime()) || d.getTime() <= Date.now()) return;
@@ -1330,7 +1359,10 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
                       : "bg-[#161820] text-[#a8acb8] rounded-2xl rounded-tl-md"
                     }`}
                 >
-                  <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{msg.body}</div>
+                  {msg.bodyIsHtml
+                    ? <div dangerouslySetInnerHTML={{ __html: msg.body }} style={{ maxWidth: "100%", overflow: "hidden auto" }} />
+                    : <div dangerouslySetInnerHTML={{ __html: linkifyText(msg.body) }} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }} />
+                  }
                 </div>
               </div>
             </div>
@@ -1357,6 +1389,7 @@ function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }
   const [error,        setError]        = useState(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduledFor, setScheduledFor] = useState(null);
+  const scheduleTriggerRef = useRef(null);
 
   const acct = accounts.find(a => a.id === acctId);
 
@@ -1482,6 +1515,7 @@ function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }
                 </button>
                 <div className="relative">
                   <button
+                    ref={scheduleTriggerRef}
                     onClick={() => setScheduleOpen(v => !v)}
                     disabled={sending || !to.trim() || !subject.trim() || !body.trim()}
                     title="Schedule send"
@@ -1493,6 +1527,7 @@ function ComposeModal({ accounts, isDemo, isOnline = true, onClose, onSchedule }
                     <ScheduleMenu
                       onSchedule={ts => { setScheduleOpen(false); handleScheduleSend(ts); }}
                       onClose={() => setScheduleOpen(false)}
+                      triggerRef={scheduleTriggerRef}
                     />
                   )}
                 </div>
@@ -1915,6 +1950,8 @@ export default function Orbital() {
             if (!data?.thread?.messages?.length) return;
             const fullMsgs = data.thread.messages.map(m => {
               const fromStr = m.from || "";
+              const raw = m.body || m.snippet || "";
+              const bodyIsHtml = isHtmlBody(raw);
               return {
                 id: m.id,
                 from: {
@@ -1924,7 +1961,8 @@ export default function Orbital() {
                 time: m.internalDate
                   ? new Date(parseInt(m.internalDate)).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
                   : m.date || "",
-                body: stripHtmlAndDecode(m.body || m.snippet || ""),
+                body: bodyIsHtml ? raw : stripHtmlAndDecode(raw),
+                bodyIsHtml,
               };
             });
             setThreads(ts => ts.map(t => t.id === id ? { ...t, messages: fullMsgs, _fullLoaded: true } : t));
