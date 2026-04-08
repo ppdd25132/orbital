@@ -37,6 +37,14 @@ const STATUS = {
   archived:       { label: "Archived",     color: "text-slate-600",  bg: "bg-slate-800/20",   bdr: "border-slate-700/20",  Icon: Archive },
 };
 
+const AI_CATEGORY = {
+  "needs-reply":       { label: "Needs Reply", color: "text-blue-400",   bg: "bg-blue-500/10",   bdr: "border-blue-500/20"   },
+  "fyi-only":          { label: "FYI",         color: "text-slate-400",  bg: "bg-slate-500/10",  bdr: "border-slate-500/20"  },
+  "waiting-on-others": { label: "Waiting",     color: "text-amber-400",  bg: "bg-amber-500/10",  bdr: "border-amber-500/20"  },
+  "actionable":        { label: "Action",      color: "text-purple-400", bg: "bg-purple-500/10", bdr: "border-purple-500/20" },
+  "promotional":       { label: "Promo",       color: "text-green-400",  bg: "bg-green-500/10",  bdr: "border-green-500/20"  },
+};
+
 const ACCT_COLORS = [
   "#6366F1","#3B82F6","#10B981","#F59E0B","#8B5CF6","#EF4444","#EC4899","#14B8A6",
 ];
@@ -503,10 +511,15 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
           {thread.subject}
         </p>
 
-        {/* Row 3: preview + badge */}
+        {/* Row 3: preview + AI/status badge */}
         <div className="flex items-center gap-2 mt-1.5">
           <p className="text-[11px] text-[#3a3f4c] truncate flex-1">{thread.preview}</p>
-          {thread.status !== "needs_response" && (
+          {thread.aiCategory && AI_CATEGORY[thread.aiCategory] && (
+            <span className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold border ${AI_CATEGORY[thread.aiCategory].color} ${AI_CATEGORY[thread.aiCategory].bg} ${AI_CATEGORY[thread.aiCategory].bdr}`}>
+              {AI_CATEGORY[thread.aiCategory].label}
+            </span>
+          )}
+          {!thread.aiCategory && thread.status !== "needs_response" && (
             <StatusBadge status={thread.status} size="xs" />
           )}
         </div>
@@ -528,17 +541,23 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
    ═══════════════════════════════════════════════════════════════════ */
 function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, search, onSearch, onSelect, loading, onRefresh, isDemo }) {
   const CHIPS = [
-    { id: "all",            label: "All" },
-    { id: "needs_response", label: "Reply" },
-    { id: "waiting",        label: "Waiting" },
-    { id: "resolved",       label: "Done" },
-    { id: "starred",        label: "Starred" },
+    { id: "all",                   label: "All" },
+    { id: "needs_response",        label: "Reply" },
+    { id: "waiting",               label: "Waiting" },
+    { id: "resolved",              label: "Done" },
+    { id: "starred",               label: "Starred" },
+    { id: "ai:needs-reply",        label: "AI Reply",   ai: true },
+    { id: "ai:fyi-only",           label: "FYI",        ai: true },
+    { id: "ai:waiting-on-others",  label: "AI Waiting", ai: true },
+    { id: "ai:actionable",         label: "Action",     ai: true },
+    { id: "ai:promotional",        label: "Promo",      ai: true },
   ];
 
   const visible = useMemo(() => {
     let t = [...threads];
-    if (filter === "starred")          t = t.filter(x => x.starred);
-    else if (filter === "archived")    t = t.filter(x => x.status === "archived");
+    if (filter === "starred")             t = t.filter(x => x.starred);
+    else if (filter === "archived")       t = t.filter(x => x.status === "archived");
+    else if (filter.startsWith("ai:"))    t = t.filter(x => x.aiCategory === filter.slice(3));
     else if (filter !== "all" && STATUS[filter]) t = t.filter(x => x.status === filter);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -555,6 +574,11 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
     all: "All Mail", needs_response: "Needs Reply",
     waiting: "Waiting", starred: "Starred",
     resolved: "Done", archived: "Archived",
+    "ai:needs-reply": "Needs Reply (AI)",
+    "ai:fyi-only": "FYI (AI)",
+    "ai:waiting-on-others": "Waiting (AI)",
+    "ai:actionable": "Action Items (AI)",
+    "ai:promotional": "Promotional (AI)",
   };
 
   return (
@@ -601,16 +625,19 @@ function ThreadListPanel({ threads, accounts, activeId, filter, onSetFilter, sea
 
         {/* Filter chips */}
         <div className="flex gap-1 mt-2.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
-          {CHIPS.map(({ id, label }) => (
+          {CHIPS.map(({ id, label, ai }) => (
             <button
               key={id}
               onClick={() => onSetFilter(id)}
               className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors
                 ${filter === id
                   ? "bg-[#1a2a4a] text-[#5B8EF8] border border-blue-500/25"
-                  : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
+                  : ai
+                    ? "text-[#4a3f6b] hover:text-[#7B5CF8] border border-[#2a1f40]"
+                    : "text-[#3a3f4c] hover:text-[#6b7280] border border-transparent"
                 }`}
             >
+              {ai && <Sparkles size={8} className="inline mr-1 opacity-70" />}
               {label}
             </button>
           ))}
@@ -1251,6 +1278,9 @@ export default function Orbital() {
   const [isDemo,     setIsDemo]     = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
 
+  // AI classification cache — persists across refreshes within the session
+  const aiCategoryCache = useRef({});
+
   const activeThread = useMemo(
     () => threads.find(t => t.id === activeId) || null,
     [threads, activeId]
@@ -1297,11 +1327,56 @@ export default function Orbital() {
         throw new Error(d.error || `Gmail error ${res.status}`);
       }
       const data = await res.json();
-      setThreads(mapGmailToThreads(data.messages || []));
+      const mapped = mapGmailToThreads(data.messages || []);
+
+      // Merge cached AI categories and preserve manual status/starred changes
+      setThreads(prev => {
+        const prevMap = Object.fromEntries(prev.map(t => [t.id, t]));
+        return mapped.map(t => ({
+          ...t,
+          status:     prevMap[t.id]?.status  ?? t.status,
+          starred:    prevMap[t.id]?.starred  ?? t.starred,
+          aiCategory: aiCategoryCache.current[t.id],
+        }));
+      });
+
+      // Classify only threads not already in the cache
+      const toClassify = mapped.filter(t => !aiCategoryCache.current[t.id]);
+      if (toClassify.length > 0) classifyThreads(toClassify);
     } catch (e) {
       setGmailError(e.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /* ── AI classification ───────────────────────────────── */
+  async function classifyThreads(toClassify) {
+    try {
+      const summaries = toClassify.map(t => ({
+        id:      t.id,
+        sender:  t.participants[0]?.name || t.participants[0]?.email || "",
+        subject: t.subject,
+        snippet: t.preview,
+      }));
+      const res = await fetch("/api/gmail/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threads: summaries }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.classifications?.length) {
+        data.classifications.forEach(c => {
+          if (c.id && c.category) aiCategoryCache.current[c.id] = c.category;
+        });
+        setThreads(ts => ts.map(t => {
+          const cat = aiCategoryCache.current[t.id];
+          return cat && !t.aiCategory ? { ...t, aiCategory: cat } : t;
+        }));
+      }
+    } catch (err) {
+      console.error("Classification error:", err);
     }
   }
 
