@@ -6,7 +6,7 @@ import {
   Eye, PenLine, Loader2, X, Check, Clock, Search,
   ArrowLeft, Star, Archive, Settings, MoreHorizontal,
   AlertCircle, LogOut, Send, Edit3, ChevronDown,
-  Zap, CornerDownRight
+  Zap, CornerDownRight, WifiOff
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -750,7 +750,7 @@ function ThreadListPanel({
 /* ═══════════════════════════════════════════════════════════════════
    REPLY BOX
    ═══════════════════════════════════════════════════════════════════ */
-function ReplyBox({ thread, accounts, isDemo }) {
+function ReplyBox({ thread, accounts, isDemo, isOnline = true }) {
   const [open,    setOpen]    = useState(false);
   const [body,    setBody]    = useState("");
   const [drafting, setDrafting] = useState(false);
@@ -909,7 +909,8 @@ function ReplyBox({ thread, accounts, isDemo }) {
             </div>
             <button
               onClick={handleSend}
-              disabled={sending || !body.trim()}
+              disabled={sending || !body.trim() || !isOnline}
+              title={!isOnline ? "Connect to internet to send" : undefined}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#5B8EF8] text-white text-[13px] font-semibold hover:bg-[#4a7def] active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed min-h-[36px]"
             >
               {sending ? <Spinner size={13} /> : <Send size={12} />}
@@ -925,7 +926,7 @@ function ReplyBox({ thread, accounts, isDemo }) {
 /* ═══════════════════════════════════════════════════════════════════
    THREAD DETAIL
    ═══════════════════════════════════════════════════════════════════ */
-function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, isMobile, isDemo }) {
+function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, isMobile, isDemo, isOnline = true }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef  = useRef(null);
   const acct     = accounts.find(a => a.id === thread.accountId);
@@ -1050,7 +1051,7 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
       </div>
 
       {/* Reply */}
-      <ReplyBox thread={thread} accounts={accounts} isDemo={isDemo} />
+      <ReplyBox thread={thread} accounts={accounts} isDemo={isDemo} isOnline={isOnline} />
     </div>
   );
 }
@@ -1058,7 +1059,7 @@ function ThreadDetail({ thread, accounts, onBack, onStatusChange, onToggleStar, 
 /* ═══════════════════════════════════════════════════════════════════
    COMPOSE MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ComposeModal({ accounts, isDemo, onClose }) {
+function ComposeModal({ accounts, isDemo, isOnline = true, onClose }) {
   const [to,       setTo]       = useState("");
   const [subject,  setSubject]  = useState("");
   const [body,     setBody]     = useState("");
@@ -1172,7 +1173,8 @@ function ComposeModal({ accounts, isDemo, onClose }) {
               </button>
               <button
                 onClick={handleSend}
-                disabled={sending || !to.trim() || !subject.trim() || !body.trim()}
+                disabled={sending || !to.trim() || !subject.trim() || !body.trim() || !isOnline}
+                title={!isOnline ? "Connect to internet to send" : undefined}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#5B8EF8] text-white text-[13px] font-semibold hover:bg-[#4a7def] active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px]"
               >
                 {sending ? <Spinner size={14} /> : <Send size={13} />}
@@ -1358,6 +1360,10 @@ export default function Orbital() {
   const [gmailError, setGmailError] = useState(null);
   const [isDemo,     setIsDemo]     = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
+  const [isOnline,   setIsOnline]   = useState(true);
+
+  // Offline queue: {type: "statusChange", id, status}
+  const offlineQueue = useRef([]);
 
   // Search
   const [aiSearch,          setAiSearch]          = useState(false);
@@ -1400,6 +1406,26 @@ export default function Orbital() {
       setShowSignIn(true);
     }
   }, [authStatus, session?.access_token, session?.error]);
+
+  /* ── Online/Offline detection ───────────────────────── */
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    function handleOnline() {
+      setIsOnline(true);
+      // Replay queued offline status changes
+      const queue = offlineQueue.current.splice(0);
+      queue.forEach(({ id, status }) =>
+        setThreads(ts => ts.map(t => t.id === id ? { ...t, status } : t))
+      );
+    }
+    function handleOffline() { setIsOnline(false); }
+    window.addEventListener("online",  handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online",  handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   /* ── Gmail fetch ─────────────────────────────────────── */
   async function fetchGmail() {
@@ -1505,6 +1531,9 @@ export default function Orbital() {
 
   function handleStatusChange(id, status) {
     setThreads(ts => ts.map(t => t.id === id ? { ...t, status } : t));
+    if (!isOnline && !isDemo) {
+      offlineQueue.current.push({ id, status });
+    }
   }
 
   function handleToggleStar(id) {
@@ -1658,6 +1687,7 @@ export default function Orbital() {
                     onToggleStar={handleToggleStar}
                     isMobile={isMobileDetail}
                     isDemo={isDemo}
+                    isOnline={isOnline}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center px-8 bg-[#0c0d10]">
@@ -1683,8 +1713,10 @@ export default function Orbital() {
 
       {/* Desktop FAB */}
       <button
-        onClick={() => setCompose(true)}
-        className="fixed bottom-6 right-6 hidden md:flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#5B8EF8] text-white text-[13px] font-semibold shadow-lg shadow-blue-500/20 hover:bg-[#4a7def] active:scale-[0.97] transition-all z-20"
+        onClick={() => isOnline && setCompose(true)}
+        disabled={!isOnline}
+        title={!isOnline ? "Connect to internet to send" : undefined}
+        className="fixed bottom-6 right-6 hidden md:flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#5B8EF8] text-white text-[13px] font-semibold shadow-lg shadow-blue-500/20 hover:bg-[#4a7def] active:scale-[0.97] transition-all z-20 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <Edit3 size={14} />
         Compose
@@ -1705,11 +1737,20 @@ export default function Orbital() {
         </div>
       )}
 
+      {/* Offline banner */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 px-4 py-2 bg-[#1a1520] border-b border-amber-500/20 anim-slide-up">
+          <WifiOff size={13} className="text-amber-400 flex-shrink-0" />
+          <span className="text-[12px] text-amber-300 font-medium">You&apos;re offline — showing cached emails</span>
+        </div>
+      )}
+
       {/* Compose modal */}
       {compose && (
         <ComposeModal
           accounts={accounts}
           isDemo={isDemo}
+          isOnline={isOnline}
           onClose={() => setCompose(false)}
         />
       )}
