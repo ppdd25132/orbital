@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Component } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import CommandPalette from "./CommandPalette";
 import {
@@ -290,6 +290,35 @@ async function generateDraft(thread, accounts, tone = "professional") {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   ERROR BOUNDARY
+   ═══════════════════════════════════════════════════════════════════ */
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("Orbital error boundary caught:", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-center px-8 bg-[#0c0d10]">
+          <div className="w-12 h-12 rounded-xl bg-[#1c1418] border border-red-500/20 flex items-center justify-center mb-4">
+            <AlertCircle size={20} className="text-red-400" />
+          </div>
+          <p className="text-[14px] font-semibold text-[#e2e4e9] mb-1">Something went wrong</p>
+          <p className="text-[12px] text-[#5c6270] mb-5 max-w-xs">{this.state.error?.message || "An unexpected error occurred."}</p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="text-[12px] text-[#5B8EF8] hover:text-[#7CA4F8] transition-colors"
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    UI ATOMS
    ═══════════════════════════════════════════════════════════════════ */
 function Avatar({ name, email, color, size = 32 }) {
@@ -357,7 +386,7 @@ function SnoozeMenu({ onSnooze, onClose }) {
     { label: "Next week",         sub: "Monday 9:00 AM",   ts: getNextMondayMorning() },
   ];
   return (
-    <div ref={menuRef} className="absolute right-0 top-10 z-50 bg-[#1a1c22] border border-[#2a2d38] rounded-xl shadow-2xl py-1.5 w-56 anim-scale">
+    <div ref={menuRef} className="absolute right-0 top-full mt-1 z-[100] bg-[#1a1c22] border border-[#2a2d38] rounded-xl shadow-2xl py-1.5 w-56 anim-scale">
       <p className="px-3 py-1 text-[10px] font-bold text-[#3a3f4c] uppercase tracking-widest">Snooze until…</p>
       {opts.map(o => (
         <button key={o.label} onClick={() => onSnooze(o.ts)}
@@ -413,7 +442,7 @@ function ScheduleMenu({ onSchedule, onClose }) {
     { label: "Send Monday morning",     sub: "9:00 AM",          ts: getNextMondayMorning() },
   ];
   return (
-    <div ref={menuRef} className="absolute right-0 bottom-12 z-50 bg-[#1a1c22] border border-[#2a2d38] rounded-xl shadow-2xl py-1.5 w-60 anim-scale">
+    <div ref={menuRef} className="absolute right-0 bottom-full mb-2 z-[100] bg-[#1a1c22] border border-[#2a2d38] rounded-xl shadow-2xl py-1.5 w-60 anim-scale">
       <p className="px-3 py-1 text-[10px] font-bold text-[#3a3f4c] uppercase tracking-widest">Schedule send…</p>
       {opts.map(o => (
         <button key={o.label} onClick={() => onSchedule(o.ts)}
@@ -1786,12 +1815,18 @@ export default function Orbital() {
         throw new Error(d.error || `Search error ${res.status}`);
       }
       const data = await res.json();
-      const mapped = mapGmailToThreads(data.messages || []);
-      setSearchResults(mapped);
-      // If NL, update the displayed query to show the converted Gmail filter
-      if (aiSearch && data.query && data.query !== query) {
-        setActiveSearchQuery(query); // keep the human-readable version
+      let mapped = mapGmailToThreads(data.messages || []);
+
+      // If AI-translated query returned 0 results, retry with the raw query
+      if (aiSearch && mapped.length === 0 && data.query && data.query !== query) {
+        const fallbackRes = await fetch(`/api/gmail/search?${new URLSearchParams({ q: query })}`);
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json();
+          mapped = mapGmailToThreads(fallbackData.messages || []);
+        }
       }
+
+      setSearchResults(mapped);
     } catch (e) {
       setSearchError(e.message || "Search failed");
       setSearchResults([]);
@@ -2105,6 +2140,7 @@ export default function Orbital() {
                 ${isMobileDetail ? "flex" : "hidden md:flex"}
               `}>
                 {activeThread ? (
+                  <ErrorBoundary key={activeThread.id}>
                   <ThreadDetail
                     key={activeThread.id}
                     thread={activeThread}
@@ -2117,6 +2153,7 @@ export default function Orbital() {
                     isDemo={isDemo}
                     isOnline={isOnline}
                   />
+                  </ErrorBoundary>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center px-8 bg-[#0c0d10]">
                     <div className="w-16 h-16 rounded-2xl bg-[#111318] border border-[#1e2028] flex items-center justify-center mb-4">
