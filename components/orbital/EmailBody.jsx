@@ -22,17 +22,35 @@ function resolveInlineAttachments(html, attachments = {}) {
     });
 }
 
-// Pure JS code injected into every HTML email iframe. It reports scrollHeight
-// via postMessage so the parent can size the iframe without allow-same-origin.
-// The closing </script> is split across a concatenation in buildSrcDoc to
-// prevent the HTML parser from closing the script block prematurely.
-const HEIGHT_SCRIPT_BODY = `(function(){
+// Bug 2 fix: linkify bare URLs that appear as plain text inside HTML email
+// content (between > and <). Skips attribute values since those are inside
+// the tag delimiters and never appear in ">text<" matches.
+function linkifyHtmlContent(html) {
+  return html.replace(/>([^<]+)</g, (match, text) => {
+    if (!/(https?:\/\/|www\.)/i.test(text)) return match;
+    const linked = text.replace(
+      /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g,
+      (url) => {
+        const href = url.startsWith("www.") ? `https://${url}` : url;
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#0969da">${url}</a>`;
+      }
+    );
+    return `>${linked}<`;
+  });
+}
+
+// Bug 1 fix: use a per-instance nonce embedded in the srcdoc so the parent
+// can route height messages to the correct iframe without relying on
+// event.source (which is unreliable for null-origin sandboxed iframes when
+// multiple iframes exist simultaneously in a multi-message thread).
+const HEIGHT_SCRIPT_TEMPLATE = `(function(){
+  var nonce='__NONCE__';
   function postH(){
     var h=Math.max(
       document.documentElement?document.documentElement.scrollHeight:0,
       document.body?document.body.scrollHeight:0
     );
-    if(h>0)parent.postMessage({type:'orbital-iframe-height',height:h},'*');
+    if(h>0)parent.postMessage({type:'orbital-iframe-height',height:h,nonce:nonce},'*');
   }
   if(document.readyState==='loading'){
     window.addEventListener('load',postH);
@@ -52,10 +70,19 @@ const HEIGHT_SCRIPT_BODY = `(function(){
   setTimeout(postH,1500);
 })();`;
 
-function buildSrcDoc(body, attachments) {
-  const resolvedHtml = resolveInlineAttachments(body, attachments);
+let _nonceCounter = 0;
+function generateNonce() {
+  return `n${++_nonceCounter}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildSrcDoc(body, attachments, nonce) {
+  let resolvedHtml = resolveInlineAttachments(body, attachments);
+  // Bug 2 fix: linkify bare URLs in HTML text nodes
+  resolvedHtml = linkifyHtmlContent(resolvedHtml);
+
+  const scriptBody = HEIGHT_SCRIPT_TEMPLATE.replace("__NONCE__", nonce);
   // Split </script> so the HTML parser doesn't close the script block early.
-  const scriptTag = `<script>${HEIGHT_SCRIPT_BODY}</scr` + `ipt>`;
+  const scriptTag = `<script>${scriptBody}</scr` + `ipt>`;
 
   return `<!DOCTYPE html>
 <html>
@@ -63,7 +90,6 @@ function buildSrcDoc(body, attachments) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light only" />
-    <meta name="referrer" content="no-referrer" />
     <style>
       :root { color-scheme: light; }
       html, body {
@@ -74,7 +100,9 @@ function buildSrcDoc(body, attachments) {
         overflow-x: hidden;
         max-width: 100%;
       }
-      * { box-sizing: border-box; max-width: 100%; }
+      /* Bug 3 fix: !important overrides inline width/max-width on email tables
+         and other elements that hardcode pixel widths. */
+      * { box-sizing: border-box; max-width: 100% !important; }
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
         font-size: 14px;
@@ -90,6 +118,9 @@ function buildSrcDoc(body, attachments) {
         max-width: 100% !important;
         height: auto !important;
       }
+      /* Bug 4 fix: hide images whose CID was not resolved instead of showing
+         a broken-image icon. */
+      img[src^="cid:"] { display: none !important; }
       table {
         width: auto !important;
         max-width: 100% !important;
@@ -125,28 +156,35 @@ function buildSrcDoc(body, attachments) {
 export default function EmailBody({ body, attachments = {} }) {
   const html = isHtmlContent(body);
   const iframeRef = useRef(null);
-  const srcDoc = useMemo(() => buildSrcDoc(body, attachments), [attachments, body]);
+  // Stable nonce per component instance — never changes across re-renders.
+  const nonceRef = useRef(null);
+  if (nonceRef.current === null) nonceRef.current = generateNonce();
+  const nonce = nonceRef.current;
 
-  // Bug 1 fix: postMessage-based auto-height instead of direct contentDocument
-  // access. With multiple iframes rendering simultaneously the load event can
-  // fire before React's useEffect attaches the listener, so the ResizeObserver
-  // approach inside the iframe + postMessage is far more reliable.
+  const srcDoc = useMemo(
+    () => buildSrcDoc(body, attachments, nonce),
+    [attachments, body, nonce]
+  );
+
+  // Bug 1 fix: use nonce to match height messages to this specific iframe
+  // instead of event.source, which can be null/unreliable for null-origin
+  // sandboxed iframes when several iframes are mounted simultaneously.
   useEffect(() => {
     if (!html || !iframeRef.current) return;
     const iframe = iframeRef.current;
 
     function handleMessage(event) {
-      if (event.source !== iframe.contentWindow) return;
       if (!event.data || event.data.type !== "orbital-iframe-height") return;
+      if (event.data.nonce !== nonce) return;
       const h = Number(event.data.height);
       if (h > 0) iframe.style.height = `${h}px`;
     }
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [html, srcDoc]);
+  }, [html, nonce]);
 
-  // Bug 2 fix: plain-text emails now linkify URLs via linkifyText().
+  // Plain-text emails: render with URL linkification.
   if (!html) {
     return (
       <div
@@ -163,20 +201,18 @@ export default function EmailBody({ body, attachments = {} }) {
       <iframe
         ref={iframeRef}
         srcDoc={srcDoc}
-        // Bug 1 fix: allow-scripts enables the postMessage height script inside
-        //   the iframe.
-        // Bug 4 fix: omitting allow-same-origin puts the iframe in a null origin
-        //   so external images (e.g. Anthropic logo) load without inheriting the
-        //   parent page's security context or referrer restrictions.
+        // allow-scripts: enables the postMessage height script inside the iframe.
+        // No allow-same-origin: iframe runs in null origin so it cannot inherit
+        // parent CSP, and external images load without cross-origin restrictions.
         sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
         style={{
           width: "100%",
-          maxWidth: "100%",   // Bug 3: prevent growing wider than container
+          maxWidth: "100%",
           border: "none",
           display: "block",
           minHeight: "40px",
           background: "#f8fafc",
-          overflowX: "hidden", // Bug 3: belt-and-suspenders on the element
+          overflowX: "hidden",
         }}
         title="Email content"
       />
