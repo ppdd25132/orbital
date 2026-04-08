@@ -75,6 +75,21 @@ export function isHtmlContent(str) {
   return /<(html|head|body|div|span|table|td|tr|p|br|img|a|style|font)\b/i.test(str);
 }
 
+export function linkifyText(text) {
+  if (!text) return "";
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return escaped.replace(
+    /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g,
+    (url) => {
+      const href = url.startsWith("www.") ? `https://${url}` : url;
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#5B8EF8;text-decoration:underline">${url}</a>`;
+    }
+  );
+}
+
 export function initials(name = "") {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length >= 2) {

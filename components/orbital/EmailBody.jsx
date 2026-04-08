@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { isHtmlContent } from "./helpers";
+import { isHtmlContent, linkifyText } from "./helpers";
 
 function resolveInlineAttachments(html, attachments = {}) {
   if (!html || !Object.keys(attachments).length) return html;
@@ -22,25 +22,59 @@ function resolveInlineAttachments(html, attachments = {}) {
     });
 }
 
+// Pure JS code injected into every HTML email iframe. It reports scrollHeight
+// via postMessage so the parent can size the iframe without allow-same-origin.
+// The closing </script> is split across a concatenation in buildSrcDoc to
+// prevent the HTML parser from closing the script block prematurely.
+const HEIGHT_SCRIPT_BODY = `(function(){
+  function postH(){
+    var h=Math.max(
+      document.documentElement?document.documentElement.scrollHeight:0,
+      document.body?document.body.scrollHeight:0
+    );
+    if(h>0)parent.postMessage({type:'orbital-iframe-height',height:h},'*');
+  }
+  if(document.readyState==='loading'){
+    window.addEventListener('load',postH);
+  } else {
+    postH();
+  }
+  if(window.ResizeObserver){
+    new ResizeObserver(postH).observe(document.documentElement);
+  }
+  document.querySelectorAll('img').forEach(function(img){
+    if(!img.complete)img.addEventListener('load',postH);
+    img.addEventListener('error',postH);
+  });
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(postH);
+  setTimeout(postH,100);
+  setTimeout(postH,500);
+  setTimeout(postH,1500);
+})();`;
+
 function buildSrcDoc(body, attachments) {
   const resolvedHtml = resolveInlineAttachments(body, attachments);
+  // Split </script> so the HTML parser doesn't close the script block early.
+  const scriptTag = `<script>${HEIGHT_SCRIPT_BODY}</scr` + `ipt>`;
 
   return `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light only" />
+    <meta name="referrer" content="no-referrer" />
     <style>
       :root { color-scheme: light; }
-      * { box-sizing: border-box; max-width: 100%; }
       html, body {
         margin: 0;
         padding: 0;
         background: #f8fafc !important;
         color: #111827 !important;
         overflow-x: hidden;
+        max-width: 100%;
       }
+      * { box-sizing: border-box; max-width: 100%; }
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
         font-size: 14px;
@@ -50,6 +84,7 @@ function buildSrcDoc(body, attachments) {
       .orbital-email-root {
         padding: 12px 14px 10px;
         min-height: 1px;
+        overflow-x: hidden;
       }
       img {
         max-width: 100% !important;
@@ -64,18 +99,14 @@ function buildSrcDoc(body, attachments) {
         white-space: pre-wrap;
         word-break: break-word;
       }
-      pre {
-        overflow-x: auto;
-      }
+      pre { overflow-x: auto; }
       blockquote {
         margin: 8px 0;
         border-left: 3px solid #cbd5e1;
         padding-left: 10px;
         color: #475569 !important;
       }
-      .gmail_quote, .gmail_attr {
-        color: #64748b !important;
-      }
+      .gmail_quote, .gmail_attr { color: #64748b !important; }
       @media (prefers-color-scheme: dark) {
         html, body {
           background: #f8fafc !important;
@@ -83,6 +114,7 @@ function buildSrcDoc(body, attachments) {
         }
       }
     </style>
+    ${scriptTag}
   </head>
   <body>
     <div class="orbital-email-root">${resolvedHtml}</div>
@@ -95,86 +127,56 @@ export default function EmailBody({ body, attachments = {} }) {
   const iframeRef = useRef(null);
   const srcDoc = useMemo(() => buildSrcDoc(body, attachments), [attachments, body]);
 
+  // Bug 1 fix: postMessage-based auto-height instead of direct contentDocument
+  // access. With multiple iframes rendering simultaneously the load event can
+  // fire before React's useEffect attaches the listener, so the ResizeObserver
+  // approach inside the iframe + postMessage is far more reliable.
   useEffect(() => {
-    if (!html || !iframeRef.current) return undefined;
-
+    if (!html || !iframeRef.current) return;
     const iframe = iframeRef.current;
-    let resizeObserver;
-    let mutationObserver;
-    const timers = [];
 
-    const updateHeight = () => {
-      try {
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (!doc) return;
-        const nextHeight = Math.max(
-          doc.documentElement?.scrollHeight || 0,
-          doc.body?.scrollHeight || 0
-        );
-        iframe.style.height = `${Math.max(nextHeight, 40)}px`;
-      } catch {}
-    };
+    function handleMessage(event) {
+      if (event.source !== iframe.contentWindow) return;
+      if (!event.data || event.data.type !== "orbital-iframe-height") return;
+      const h = Number(event.data.height);
+      if (h > 0) iframe.style.height = `${h}px`;
+    }
 
-    const onLoad = () => {
-      try {
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (!doc) return;
-
-        resizeObserver = new ResizeObserver(updateHeight);
-        mutationObserver = new MutationObserver(updateHeight);
-
-        resizeObserver.observe(doc.documentElement);
-        mutationObserver.observe(doc.body, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-        });
-
-        doc.querySelectorAll("img").forEach((img) => {
-          img.addEventListener("load", updateHeight);
-          img.addEventListener("error", updateHeight);
-        });
-
-        doc.fonts?.ready?.then(updateHeight).catch(() => {});
-      } catch {}
-
-      updateHeight();
-      timers.push(window.setTimeout(updateHeight, 80));
-      timers.push(window.setTimeout(updateHeight, 400));
-      timers.push(window.setTimeout(updateHeight, 1200));
-    };
-
-    iframe.addEventListener("load", onLoad);
-    onLoad();
-
-    return () => {
-      iframe.removeEventListener("load", onLoad);
-      resizeObserver?.disconnect();
-      mutationObserver?.disconnect();
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
   }, [html, srcDoc]);
 
+  // Bug 2 fix: plain-text emails now linkify URLs via linkifyText().
   if (!html) {
     return (
-      <div className="email-body" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-        {body}
-      </div>
+      <div
+        className="email-body"
+        style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+        dangerouslySetInnerHTML={{ __html: linkifyText(body) }}
+      />
     );
   }
 
   return (
+    // Bug 3 fix: overflow-hidden clips any content that escapes the iframe bounds.
     <div className="overflow-hidden rounded-[18px] bg-white ring-1 ring-black/5">
       <iframe
         ref={iframeRef}
         srcDoc={srcDoc}
-        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        // Bug 1 fix: allow-scripts enables the postMessage height script inside
+        //   the iframe.
+        // Bug 4 fix: omitting allow-same-origin puts the iframe in a null origin
+        //   so external images (e.g. Anthropic logo) load without inheriting the
+        //   parent page's security context or referrer restrictions.
+        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
         style={{
           width: "100%",
+          maxWidth: "100%",   // Bug 3: prevent growing wider than container
           border: "none",
           display: "block",
           minHeight: "40px",
           background: "#f8fafc",
+          overflowX: "hidden", // Bug 3: belt-and-suspenders on the element
         }}
         title="Email content"
       />
