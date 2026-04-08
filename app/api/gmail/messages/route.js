@@ -25,11 +25,14 @@ async function fetchMessagesForAccount(token, accountEmail, maxResults) {
       const get = (name) => headers.find((h) => h.name === name)?.value || '';
       return {
         id: msg.id,
-        threadId: msg.threadId,
+        threadId: `${accountEmail}::${msg.threadId || id}`,
+        _realThreadId: msg.threadId || id,
         subject: get('Subject'),
         from: get('From'),
         date: get('Date'),
         snippet: msg.snippet,
+        labelIds: msg.labelIds || [],
+        internalDate: msg.internalDate,
         accountEmail,
       };
     })

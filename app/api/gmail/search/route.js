@@ -65,6 +65,8 @@ async function searchMessagesForAccount(token, accountEmail, query, maxResults) 
         from: get('From'),
         date: get('Date'),
         snippet: msg.snippet,
+        labelIds: msg.labelIds || [],
+        internalDate: msg.internalDate,
         accountEmail,
       };
     })
@@ -102,31 +104,41 @@ export async function GET(request) {
     }
 
     const primaryEmail = session.user?.email || 'primary';
-
-    // Fetch primary + linked accounts in parallel
     const rawLinked = getLinkedAccounts(request);
-    const [primaryMessages, ...linkedResults] = await Promise.all([
-      searchMessagesForAccount(session.access_token, primaryEmail, gmailQuery, maxResults),
-      ...rawLinked.map(async (acc) => {
-        const refreshed = await refreshTokenIfNeeded(acc);
-        return searchMessagesForAccount(
-          refreshed.access_token,
-          refreshed.email,
-          gmailQuery,
-          Math.ceil(maxResults / 2)
-        );
-      }),
-    ]);
 
-    // Merge and sort by date descending
-    const all = [...primaryMessages, ...linkedResults.flat()].sort(
-      (a, b) => new Date(b.date) - new Date(a.date)
-    );
+    async function searchAcrossAccounts(query) {
+      const [primaryMessages, ...linkedResults] = await Promise.all([
+        searchMessagesForAccount(session.access_token, primaryEmail, query, maxResults),
+        ...rawLinked.map(async (acc) => {
+          const refreshed = await refreshTokenIfNeeded(acc);
+          return searchMessagesForAccount(
+            refreshed.access_token,
+            refreshed.email,
+            query,
+            Math.ceil(maxResults / 2)
+          );
+        }),
+      ]);
+
+      return [...primaryMessages, ...linkedResults.flat()].sort(
+        (a, b) => new Date(b.date) - new Date(a.date)
+      );
+    }
+
+    let all = await searchAcrossAccounts(gmailQuery);
+    let fallbackUsed = false;
+
+    if (naturalLanguage && gmailQuery !== rawQuery && all.length === 0) {
+      all = await searchAcrossAccounts(rawQuery);
+      fallbackUsed = true;
+      gmailQuery = rawQuery;
+    }
 
     return NextResponse.json({
       messages: all,
       query: gmailQuery,
       originalQuery: rawQuery,
+      fallbackUsed,
     });
   } catch (err) {
     console.error('Gmail search error:', err);
