@@ -23,6 +23,22 @@ Rules:
 - Match the register of the conversation (if it's internal Slack-style, keep it loose; if it's client-facing, stay crisp).${closing}`;
 }
 
+function buildSuggestionsPrompt(userName, userEmail) {
+  const firstName = userName?.split(" ")[0] || "there";
+  return `You are an AI email assistant for ${userName || "the user"} <${userEmail || ""}>.
+
+Generate exactly 3 short reply options for the last message in this email thread.
+
+Rules:
+- Each reply MUST be 1–2 sentences. Keep them punchy and executive-level.
+- Vary the intent: (1) positive/agreeing/moving forward, (2) needs more info or deferring, (3) brief acknowledgment or polite decline.
+- Match the formality of the conversation.
+- Do NOT include greetings ("Hi X") or signatures ("Best, Y").
+- Return ONLY a JSON array of exactly 3 strings. No markdown fences, no explanation.
+
+Example: ["Sounds good, let's proceed with that approach.","Could we schedule a quick call to discuss the details?","Thanks for the update — I'll review and circle back by EOD."]`;
+}
+
 function buildThreadHistory(threadMessages) {
   return threadMessages
     .map((m, i) => {
@@ -41,7 +57,7 @@ export async function POST(request) {
   }
 
   // Support both the new structured format and the legacy system/messages format
-  const { threadMessages, userName, userEmail, tone, system, messages } = body;
+  const { threadMessages, userName, userEmail, tone, mode, system, messages } = body;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -53,16 +69,18 @@ export async function POST(request) {
 
   let systemPrompt;
   let claudeMessages;
+  const isSuggestions = mode === 'suggestions';
 
   if (threadMessages && Array.isArray(threadMessages) && threadMessages.length > 0) {
-    // New structured format: build prompt server-side
-    systemPrompt = buildSystemPrompt(userName, userEmail, tone || 'professional');
+    systemPrompt = isSuggestions
+      ? buildSuggestionsPrompt(userName, userEmail)
+      : buildSystemPrompt(userName, userEmail, tone || 'professional');
     const history = buildThreadHistory(threadMessages);
     const lastMsg = threadMessages[threadMessages.length - 1];
     claudeMessages = [
       {
         role: 'user',
-        content: `Here is the full email thread:\n\n${history}\n\nYou are replying to the last message from ${lastMsg.from.name}. Write the reply now.`,
+        content: `Here is the full email thread:\n\n${history}\n\nYou are replying to the last message from ${lastMsg.from.name}.${isSuggestions ? ' Generate 3 short reply options as a JSON array.' : ' Write the reply now.'}`,
       },
     ];
   } else if (messages && Array.isArray(messages) && messages.length > 0) {
@@ -82,8 +100,8 @@ export async function POST(request) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 1024,
+        model: isSuggestions ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-5',
+        max_tokens: isSuggestions ? 300 : 1024,
         system: systemPrompt,
         messages: claudeMessages,
       }),
@@ -97,6 +115,18 @@ export async function POST(request) {
         { error: data.error?.message || 'Draft generation failed' },
         { status: response.status }
       );
+    }
+
+    // For suggestions mode, parse the JSON array from the response text
+    if (isSuggestions) {
+      try {
+        const raw = data.content?.map((b) => b.text || '').join('') || '[]';
+        const cleaned = raw.replace(/```json?\s*/g, '').replace(/```\s*/g, '').trim();
+        const suggestions = JSON.parse(cleaned);
+        return Response.json({ suggestions: Array.isArray(suggestions) ? suggestions.slice(0, 3) : [] });
+      } catch {
+        return Response.json({ suggestions: [] });
+      }
     }
 
     return Response.json(data);

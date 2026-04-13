@@ -497,6 +497,24 @@ export default function Orbital() {
     }
   }
 
+  // Auto-advance: after acting on a thread, select the next one so the exec
+  // can triage without going back to the list.
+  function advanceToNext(currentId) {
+    const list = (searchResults !== null ? searchResults : displayedThreads)
+      .filter((t) =>
+        filter === "starred" ? t.starred : filter === "all" ? true : t.status === filter
+      )
+      .sort((a, b) => b.lastActivityTs - a.lastActivityTs);
+    const idx = list.findIndex((t) => t.id === currentId);
+    const next = list[idx + 1] || list[idx - 1];
+    if (next) {
+      void handleSelect(next.id);
+    } else {
+      setActiveId(null);
+      setMobilePanel("list");
+    }
+  }
+
   function handleStatusChange(id, status) {
     const thread =
       threads.find((entry) => entry.id === id) ||
@@ -530,6 +548,14 @@ export default function Orbital() {
           )
         : current
     );
+
+    // Auto-advance: when archiving or resolving, jump to the next thread
+    if (
+      activeId === id &&
+      (status === "archived" || status === "resolved")
+    ) {
+      advanceToNext(id);
+    }
 
     if (!addLabelIds.length && !removeLabelIds.length) return;
 
@@ -654,6 +680,11 @@ export default function Orbital() {
     setSearchResults((current) =>
       Array.isArray(current) ? current.map(updater) : current
     );
+
+    // Auto-advance to next thread after sending a reply
+    if (activeId === threadId) {
+      advanceToNext(threadId);
+    }
   }
 
   async function handleSelect(id) {
@@ -840,10 +871,10 @@ export default function Orbital() {
       }
 
       const index = keyboardThreads.indexOf(activeId);
-      if (event.key === "j" && index < keyboardThreads.length - 1) {
+      if ((event.key === "j" || event.key === "ArrowRight") && index < keyboardThreads.length - 1) {
         void handleSelect(keyboardThreads[index + 1]);
       }
-      if (event.key === "k" && index > 0) {
+      if ((event.key === "k" || event.key === "ArrowLeft") && index > 0) {
         void handleSelect(keyboardThreads[index - 1]);
       }
       if (event.key === "e") handleStatusChange(activeId, "archived");
@@ -952,6 +983,8 @@ export default function Orbital() {
                           activeSearchQuery={activeSearchQuery}
                           onClearSearch={clearSearch}
                           isClassifying={classifyLoading}
+                          onArchive={(id) => handleStatusChange(id, "archived")}
+                          onToggleStar={handleToggleStar}
                         />
                       )}
                     </div>

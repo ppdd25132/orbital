@@ -7,8 +7,8 @@ const GROUPS = [
   {
     label: "Navigation",
     shortcuts: [
-      { keys: ["J"], description: "Next thread" },
-      { keys: ["K"], description: "Previous thread" },
+      { keys: ["J", "→"], description: "Next thread" },
+      { keys: ["K", "←"], description: "Previous thread" },
       { keys: ["Esc"], description: "Close compose / palette" },
     ],
   },

@@ -100,11 +100,20 @@ export default function ReplyBox({
       setOpen(true);
     }
 
+    function handleOpenReplyWithText(event) {
+      setBody(event.detail || "");
+      setOpen(true);
+      setAiUsed(true);
+      window.setTimeout(() => textareaRef.current?.focus(), 50);
+    }
+
     window.addEventListener("orbital:openReply", handleOpenReply);
+    window.addEventListener("orbital:openReplyWithText", handleOpenReplyWithText);
     window.addEventListener("orbital:openAIDraft", handleOpenAIDraft);
 
     return () => {
       window.removeEventListener("orbital:openReply", handleOpenReply);
+      window.removeEventListener("orbital:openReplyWithText", handleOpenReplyWithText);
       window.removeEventListener("orbital:openAIDraft", handleOpenAIDraft);
     };
   }, [thread.id, tone]); // eslint-disable-line react-hooks/exhaustive-deps

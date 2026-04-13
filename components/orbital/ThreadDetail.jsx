@@ -12,6 +12,7 @@ import { ACCT_COLORS, STATUS } from "./constants";
 import { isHtmlContent } from "./helpers";
 import SnoozeMenu from "./SnoozeMenu";
 import EmailBody from "./EmailBody";
+import QuickReplies from "./QuickReplies";
 import ReplyBox from "./ReplyBox";
 import { Avatar, Spinner, StatusBadge } from "./shared";
 import PanelErrorBoundary from "./ErrorBoundary";
@@ -240,6 +241,20 @@ export default function ThreadDetail({
           );
         })}
       </div>
+
+      <QuickReplies
+        thread={thread}
+        accounts={accounts}
+        isDemo={isDemo}
+        isOnline={isOnline}
+        onSendSuccess={onReplySend}
+        onEditSuggestion={(text) => {
+          // Dispatch event to open reply box with pre-filled text
+          window.dispatchEvent(
+            new CustomEvent("orbital:openReplyWithText", { detail: text })
+          );
+        }}
+      />
 
       <PanelErrorBoundary
         resetKey={thread.id}

@@ -3,6 +3,7 @@
 import {
   BellOff,
   CalendarClock,
+  Check,
   CheckCircle2,
   Edit3,
   Inbox,
@@ -18,7 +19,7 @@ import { MOBILE_NAV } from "./constants";
 import { formatSnoozeTime } from "./helpers";
 import { StatusBadge, ThreadListSkeleton } from "./shared";
 
-function ThreadItem({ thread, accounts, isActive, onSelect }) {
+function ThreadItem({ thread, accounts, isActive, onSelect, onArchive, onToggleStar }) {
   const account = accounts.find((item) => item.id === thread.accountId);
   const isUnread = thread.status === "needs_response";
   const sender = thread.participants[0];
@@ -26,7 +27,7 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
   return (
     <button
       onClick={() => onSelect(thread.id)}
-      className={`flex min-h-[84px] w-full items-stretch border-b border-[#171920] text-left transition-colors ${
+      className={`group/item flex min-h-[84px] w-full items-stretch border-b border-[#171920] text-left transition-colors ${
         isActive ? "bg-[#1a1f2e]" : "hover:bg-[#14161e] active:bg-[#16181f]"
       }`}
     >
@@ -67,8 +68,8 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
           {thread.subject}
         </p>
 
-        <div className="mt-1.5 flex items-center gap-2">
-          <p className="flex-1 truncate text-[11px] text-[#3a3f4c]">{thread.preview}</p>
+        <div className="relative mt-1.5 flex items-center gap-2">
+          <p className="flex-1 truncate text-[11px] text-[#3a3f4c] group-hover/item:pr-16">{thread.preview}</p>
           {thread.status !== "needs_response" || thread._classifying ? (
             <StatusBadge
               status={thread.status}
@@ -76,6 +77,33 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
               loading={thread._classifying}
             />
           ) : null}
+          {/* Hover quick-actions: archive + star without opening thread */}
+          <div className="absolute right-0 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 group-hover/item:flex">
+            {onArchive && thread.status !== "archived" ? (
+              <span
+                role="button"
+                onClick={(e) => { e.stopPropagation(); onArchive(thread.id); }}
+                className="flex h-6 w-6 items-center justify-center rounded-md bg-[#1e2028] text-[#4a4f5c] transition-colors hover:bg-[#2a2d38] hover:text-[#c8ccd4]"
+                title="Archive"
+              >
+                <Check size={11} />
+              </span>
+            ) : null}
+            {onToggleStar ? (
+              <span
+                role="button"
+                onClick={(e) => { e.stopPropagation(); onToggleStar(thread.id); }}
+                className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+                  thread.starred
+                    ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"
+                    : "bg-[#1e2028] text-[#4a4f5c] hover:bg-[#2a2d38] hover:text-amber-400"
+                }`}
+                title={thread.starred ? "Unstar" : "Star"}
+              >
+                <Star size={11} className={thread.starred ? "fill-current" : ""} />
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {account ? (
@@ -324,6 +352,8 @@ export default function ThreadListPanel({
   activeSearchQuery,
   onClearSearch,
   isClassifying = false,
+  onArchive,
+  onToggleStar,
 }) {
   const chipCounts = {
     needs_response: threads.filter((t) => t.status === "needs_response").length,
@@ -571,6 +601,8 @@ export default function ThreadListPanel({
                 accounts={accounts}
                 isActive={thread.id === activeId}
                 onSelect={onSelect}
+                onArchive={onArchive}
+                onToggleStar={onToggleStar}
               />
             ))}
           </div>
