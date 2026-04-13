@@ -95,19 +95,34 @@ export function AIDraftSkeleton() {
   );
 }
 
+// Deterministic pseudo-random widths so rows look like varied real content
+// without re-shuffling on every render.
+const SKELETON_ROWS = [
+  { sender: "w-28", time: "w-8",  subject: "w-48", preview: "w-36" },
+  { sender: "w-20", time: "w-10", subject: "w-40", preview: "w-44" },
+  { sender: "w-32", time: "w-9",  subject: "w-52", preview: "w-32" },
+  { sender: "w-24", time: "w-11", subject: "w-44", preview: "w-40" },
+  { sender: "w-18", time: "w-8",  subject: "w-36", preview: "w-48" },
+  { sender: "w-30", time: "w-10", subject: "w-56", preview: "w-28" },
+  { sender: "w-22", time: "w-9",  subject: "w-42", preview: "w-38" },
+];
+
 export function ThreadListSkeleton({ count = 5 }) {
   return (
     <div className="px-4 pt-3 space-y-4">
-      {Array.from({ length: count }).map((_, index) => (
-        <div key={index} className="py-1">
-          <div className="mb-2 flex justify-between">
-            <div className="skeleton h-3 w-24" />
-            <div className="skeleton h-3 w-10" />
+      {Array.from({ length: count }).map((_, index) => {
+        const row = SKELETON_ROWS[index % SKELETON_ROWS.length];
+        return (
+          <div key={index} className="py-1">
+            <div className="mb-2 flex justify-between">
+              <div className={`skeleton h-3 ${row.sender}`} />
+              <div className={`skeleton h-3 ${row.time}`} />
+            </div>
+            <div className={`skeleton mb-1.5 h-3 ${row.subject}`} />
+            <div className={`skeleton h-2.5 ${row.preview}`} />
           </div>
-          <div className="skeleton mb-1.5 h-3 w-44" />
-          <div className="skeleton h-2.5 w-36" />
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
