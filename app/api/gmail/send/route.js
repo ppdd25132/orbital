@@ -17,7 +17,7 @@ export async function POST(request) {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { to, subject, body: messageBody, replyToMessageId, fromEmail } = body;
+  const { to, cc, subject, body: messageBody, replyToMessageId, fromEmail } = body;
 
   if (!to || !subject || !messageBody) {
     return Response.json(
@@ -40,6 +40,7 @@ export async function POST(request) {
   try {
     const result = await sendMessage(token, {
       to,
+      cc: cc || undefined,
       subject,
       body: messageBody,
       replyToMessageId,

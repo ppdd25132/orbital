@@ -46,6 +46,11 @@ function ThreadItem({ thread, accounts, isActive, onSelect }) {
           >
             {sender?.name || sender?.email || "Unknown"}
           </span>
+          {thread.messages.length > 1 ? (
+            <span className="flex-shrink-0 rounded-full bg-[#1e2028] px-1.5 py-0.5 text-[10px] font-medium text-[#3a3f4c]">
+              {thread.messages.length}
+            </span>
+          ) : null}
           <span className="ml-1 flex-shrink-0 text-[11px] text-[#3a3f4c]">
             {thread.lastActivity}
           </span>

@@ -13,6 +13,7 @@ import ThreadListPanel, {
 } from "./orbital/ThreadList";
 import ThreadDetail from "./orbital/ThreadDetail";
 import ComposeModal from "./orbital/ComposeModal";
+import ShortcutsModal from "./orbital/ShortcutsModal";
 import PanelErrorBoundary from "./orbital/ErrorBoundary";
 import {
   EmptyThreadState,
@@ -68,6 +69,7 @@ export default function Orbital() {
   const [snoozedThreads, setSnoozedThreads] = useState(() => loadSnoozed());
   const [scheduledMessages, setScheduledMessages] = useState(() => loadScheduled());
 
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [aiSearch, setAiSearch] = useState(false);
   const [searchResults, setSearchResults] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -89,6 +91,12 @@ export default function Orbital() {
       null
     );
   }, [activeId, searchResults, threads]);
+
+  // Update browser tab title with unread count so you know at a glance.
+  useEffect(() => {
+    const unread = threads.filter((t) => t.status === "needs_response").length;
+    document.title = unread > 0 ? `(${unread}) Orbital` : "Orbital";
+  }, [threads]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -790,13 +798,24 @@ export default function Orbital() {
         return;
       }
 
+      if (event.key === "?") {
+        setShortcutsOpen(true);
+        return;
+      }
+
       if (event.key === "Escape") {
+        if (shortcutsOpen) { setShortcutsOpen(false); return; }
         closeCompose();
         setCmdPaletteOpen(false);
         return;
       }
 
       if (!activeId) return;
+
+      if (event.key === "r") {
+        window.dispatchEvent(new Event("orbital:openReply"));
+        return;
+      }
 
       const index = keyboardThreads.indexOf(activeId);
       if (event.key === "j" && index < keyboardThreads.length - 1) {
@@ -815,7 +834,7 @@ export default function Orbital() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeId, displayedThreads, filter, searchResults]);
+  }, [activeId, displayedThreads, filter, searchResults, shortcutsOpen]);
 
   if (showSignIn) {
     return <SignInView onDemo={enterDemo} />;
@@ -1018,6 +1037,10 @@ export default function Orbital() {
               initialAccountId={composeDraft?.accountId || ""}
             />
           </PanelErrorBoundary>
+        ) : null}
+
+        {shortcutsOpen ? (
+          <ShortcutsModal onClose={() => setShortcutsOpen(false)} />
         ) : null}
 
         <CommandPalette

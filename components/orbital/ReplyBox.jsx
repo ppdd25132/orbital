@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, CornerDownRight, Send, Sparkles, X } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  CornerDownRight,
+  Send,
+  Sparkles,
+  Users,
+  X,
+} from "lucide-react";
 import { AIDraftSkeleton, InlineError, Spinner } from "./shared";
 
 async function generateDraft(thread, accounts, tone = "professional") {
@@ -48,6 +56,7 @@ export default function ReplyBox({
   onSendSuccess,
 }) {
   const [open, setOpen] = useState(false);
+  const [replyAll, setReplyAll] = useState(false);
   const [body, setBody] = useState("");
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
@@ -61,12 +70,20 @@ export default function ReplyBox({
   const lastMessage = thread.messages[thread.messages.length - 1];
   const replyTo = lastMessage?.from?.email;
 
+  // CC = every participant except the sender we're replying to and ourselves
+  const ccEmails = thread.participants
+    .map((p) => p.email)
+    .filter((email) => email && email !== replyTo && email !== account?.email);
+  const ccString = ccEmails.join(", ");
+  const hasMultipleRecipients = ccEmails.length > 0;
+
   useEffect(() => {
     if (open) textareaRef.current?.focus();
   }, [open]);
 
   useEffect(() => {
     setOpen(false);
+    setReplyAll(false);
     setBody("");
     setSent(false);
     setError(null);
@@ -125,6 +142,7 @@ export default function ReplyBox({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: replyTo,
+          cc: replyAll && ccString ? ccString : undefined,
           subject: `Re: ${thread.subject}`,
           body,
           replyToMessageId: lastMessage?.id,
@@ -168,6 +186,15 @@ export default function ReplyBox({
           <CornerDownRight size={13} className="flex-shrink-0" />
           Reply to {lastMessage?.from?.name?.split(" ")[0] || "thread"}…
         </button>
+        {hasMultipleRecipients ? (
+          <button
+            onClick={() => { setReplyAll(true); setOpen(true); }}
+            className="flex min-h-[44px] flex-shrink-0 items-center gap-1.5 rounded-xl border border-[#1e2028] bg-[#16181f] px-3 py-2.5 text-[13px] text-[#3a3f4c] transition-all hover:border-[#2a2d3a] hover:text-[#5c6270]"
+            title="Reply All"
+          >
+            <Users size={13} />
+          </button>
+        ) : null}
         <button
           onClick={handleGenerate}
           disabled={!isOnline}
@@ -183,26 +210,51 @@ export default function ReplyBox({
   return (
     <div className="safe-area-inset-bottom flex-shrink-0 border-t border-[#1e2028] anim-slide-up">
       <div className="flex items-center justify-between border-b border-[#1a1c22] px-4 py-2">
-        <div className="flex items-center gap-2 text-[11px] text-[#4a4f5c]">
-          <span>To:</span>
-          <span className="max-w-[200px] truncate text-[#7a7f8e]">{replyTo}</span>
-          {aiUsed ? (
-            <div className="flex items-center gap-1 rounded border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-[#5B8EF8]">
-              <Sparkles size={9} /> AI
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-center gap-2 text-[11px] text-[#4a4f5c]">
+            <span className="flex-shrink-0">To:</span>
+            <span className="truncate text-[#7a7f8e]">{replyTo}</span>
+            {aiUsed ? (
+              <div className="flex flex-shrink-0 items-center gap-1 rounded border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-[#5B8EF8]">
+                <Sparkles size={9} /> AI
+              </div>
+            ) : null}
+          </div>
+          {replyAll && ccString ? (
+            <div className="flex items-center gap-2 text-[11px] text-[#4a4f5c]">
+              <span className="flex-shrink-0">CC:</span>
+              <span className="truncate text-[#5c6270]">{ccString}</span>
             </div>
           ) : null}
         </div>
-        <button
-          onClick={() => {
-            setOpen(false);
-            setBody("");
-            setError(null);
-            setAiUsed(false);
-          }}
-          className="flex h-7 w-7 items-center justify-center rounded hover:bg-[#1e2028] text-[#3a3f4c] transition-colors hover:text-[#8b8f9a]"
-        >
-          <X size={12} />
-        </button>
+        <div className="ml-2 flex flex-shrink-0 items-center gap-1">
+          {hasMultipleRecipients ? (
+            <button
+              onClick={() => setReplyAll((v) => !v)}
+              title={replyAll ? "Switch to Reply" : "Switch to Reply All"}
+              className={`flex h-7 items-center gap-1 rounded px-2 text-[10px] font-medium transition-colors ${
+                replyAll
+                  ? "bg-blue-500/15 text-[#5B8EF8]"
+                  : "text-[#3a3f4c] hover:bg-[#1e2028] hover:text-[#8b8f9a]"
+              }`}
+            >
+              <Users size={11} />
+              {replyAll ? "All" : "All?"}
+            </button>
+          ) : null}
+          <button
+            onClick={() => {
+              setOpen(false);
+              setBody("");
+              setError(null);
+              setAiUsed(false);
+              setReplyAll(false);
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded text-[#3a3f4c] transition-colors hover:bg-[#1e2028] hover:text-[#8b8f9a]"
+          >
+            <X size={12} />
+          </button>
+        </div>
       </div>
 
       {drafting ? (
@@ -261,7 +313,7 @@ export default function ReplyBox({
               className="flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#5B8EF8] px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#4a7def] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {sending ? <Spinner size={13} /> : <Send size={12} />}
-              {sending ? "Sending…" : "Send"}
+              {sending ? "Sending…" : replyAll && ccString ? "Send All" : "Send"}
             </button>
           </div>
         </>
