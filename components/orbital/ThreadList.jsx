@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import {
   BellOff,
   CalendarClock,
@@ -7,6 +8,7 @@ import {
   CheckCircle2,
   Edit3,
   Inbox,
+  Paperclip,
   Search,
   Settings,
   Sparkles,
@@ -23,12 +25,67 @@ function ThreadItem({ thread, accounts, isActive, onSelect, onArchive, onToggleS
   const account = accounts.find((item) => item.id === thread.accountId);
   const isUnread = thread.status === "needs_response";
   const sender = thread.participants[0];
+  const hasAttachments = thread.messages.some(
+    (m) => m.inlineAttachments && Object.keys(m.inlineAttachments).length > 0
+  );
+
+  // Swipe gesture state
+  const touchRef = useRef({ startX: 0, startY: 0, swiping: false });
+  const rowRef = useRef(null);
+
+  function handleTouchStart(e) {
+    const touch = e.touches[0];
+    touchRef.current = { startX: touch.clientX, startY: touch.clientY, swiping: false };
+  }
+
+  function handleTouchMove(e) {
+    const touch = e.touches[0];
+    const dx = touch.clientX - touchRef.current.startX;
+    const dy = touch.clientY - touchRef.current.startY;
+    // Only swipe if horizontal movement dominates
+    if (!touchRef.current.swiping && Math.abs(dx) > 20 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      touchRef.current.swiping = true;
+    }
+    if (touchRef.current.swiping && rowRef.current) {
+      const clamped = Math.max(-100, Math.min(100, dx));
+      rowRef.current.style.transform = `translateX(${clamped}px)`;
+      rowRef.current.style.transition = "none";
+    }
+  }
+
+  function handleTouchEnd() {
+    const dx = (rowRef.current?.style.transform.match(/-?\d+/)?.[0] || 0) * 1;
+    if (rowRef.current) {
+      rowRef.current.style.transform = "";
+      rowRef.current.style.transition = "transform 0.25s ease";
+    }
+    if (dx < -60 && onArchive && thread.status !== "archived") {
+      onArchive(thread.id);
+    } else if (dx > 60 && onToggleStar) {
+      onToggleStar(thread.id);
+    }
+    touchRef.current.swiping = false;
+  }
 
   return (
+    <div className="relative overflow-hidden">
+      {/* Swipe reveal backgrounds */}
+      <div className="absolute inset-0 flex items-center justify-between pointer-events-none">
+        <div className="flex h-full w-1/2 items-center pl-5 bg-amber-500/20">
+          <Star size={16} className="text-amber-400" />
+        </div>
+        <div className="flex h-full w-1/2 items-center justify-end pr-5 bg-emerald-500/20">
+          <Check size={16} className="text-emerald-400" />
+        </div>
+      </div>
     <button
-      onClick={() => onSelect(thread.id)}
-      className={`group/item flex min-h-[84px] w-full items-stretch border-b border-[#171920] text-left transition-colors ${
-        isActive ? "bg-[#1a1f2e]" : "hover:bg-[#14161e] active:bg-[#16181f]"
+      ref={rowRef}
+      onClick={() => !touchRef.current.swiping && onSelect(thread.id)}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      className={`group/item relative z-10 flex min-h-[84px] w-full items-stretch border-b border-[#171920] text-left transition-colors bg-[#0c0d10] ${
+        isActive ? "!bg-[#1a1f2e]" : "hover:bg-[#14161e] active:bg-[#16181f]"
       }`}
     >
       <div
@@ -55,6 +112,9 @@ function ThreadItem({ thread, accounts, isActive, onSelect, onArchive, onToggleS
           <span className="ml-1 flex-shrink-0 text-[11px] text-[#3a3f4c]">
             {thread.lastActivity}
           </span>
+          {hasAttachments ? (
+            <Paperclip size={10} className="flex-shrink-0 text-[#3a3f4c]" />
+          ) : null}
           {thread.starred ? (
             <Star size={10} className="flex-shrink-0 fill-amber-400 text-amber-400" />
           ) : null}
@@ -117,6 +177,7 @@ function ThreadItem({ thread, accounts, isActive, onSelect, onArchive, onToggleS
         ) : null}
       </div>
     </button>
+    </div>
   );
 }
 
@@ -436,6 +497,12 @@ export default function ThreadListPanel({
             ) : null}
           </div>
           <div className="flex items-center gap-1">
+            {/* Triage progress: shows how many threads still need action */}
+            {!isSearchMode && filter === "needs_response" && chipCounts.needs_response > 0 ? (
+              <span className="mr-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-[#5B8EF8]">
+                {chipCounts.needs_response} left
+              </span>
+            ) : null}
             {isDemo ? (
               <span className="rounded border border-amber-500/20 bg-[#2a1a05] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-400">
                 DEMO

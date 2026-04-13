@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { signIn, useSession } from "next-auth/react";
-import { AlertCircle, Edit3, WifiOff } from "lucide-react";
+import { AlertCircle, CheckCircle2, Edit3, WifiOff } from "lucide-react";
 import CommandPalette from "./CommandPalette";
 import Sidebar from "./orbital/Sidebar";
 import ThreadListPanel, {
@@ -70,6 +70,7 @@ export default function Orbital() {
   const [scheduledMessages, setScheduledMessages] = useState(() => loadScheduled());
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [sentToast, setSentToast] = useState(null); // { subject, threadId }
   const [aiSearch, setAiSearch] = useState(false);
   const [searchResults, setSearchResults] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -681,6 +682,10 @@ export default function Orbital() {
       Array.isArray(current) ? current.map(updater) : current
     );
 
+    // Show sent confirmation toast
+    setSentToast({ subject: thread?.subject || "Message", threadId });
+    setTimeout(() => setSentToast((t) => t?.threadId === threadId ? null : t), 3500);
+
     // Auto-advance to next thread after sending a reply
     if (activeId === threadId) {
       advanceToNext(threadId);
@@ -870,6 +875,15 @@ export default function Orbital() {
         return;
       }
 
+      if (event.key === "f" && activeThread) {
+        const lastMsg = activeThread.messages[activeThread.messages.length - 1];
+        openCompose({
+          subject: `Fwd: ${activeThread.subject}`,
+          body: `\n\n---------- Forwarded message ----------\nFrom: ${lastMsg.from.name} <${lastMsg.from.email}>\nDate: ${lastMsg.time}\nSubject: ${activeThread.subject}\n\n${lastMsg.body}`,
+        });
+        return;
+      }
+
       const index = keyboardThreads.indexOf(activeId);
       if ((event.key === "j" || event.key === "ArrowRight") && index < keyboardThreads.length - 1) {
         void handleSelect(keyboardThreads[index + 1]);
@@ -1018,6 +1032,13 @@ export default function Orbital() {
                         onStatusChange={handleStatusChange}
                         onToggleStar={handleToggleStar}
                         onSnooze={handleSnooze}
+                        onForward={(thread) => {
+                          const lastMsg = thread.messages[thread.messages.length - 1];
+                          openCompose({
+                            subject: `Fwd: ${thread.subject}`,
+                            body: `\n\n---------- Forwarded message ----------\nFrom: ${lastMsg.from.name} <${lastMsg.from.email}>\nDate: ${lastMsg.time}\nSubject: ${thread.subject}\n\n${lastMsg.body}`,
+                          });
+                        }}
                         isMobile={isMobileDetail}
                         isDemo={isDemo}
                         isOnline={isOnline}
@@ -1075,6 +1096,22 @@ export default function Orbital() {
             <span className="text-[12px] font-medium text-amber-300">
               You&apos;re offline — Gmail actions are temporarily disabled
             </span>
+          </div>
+        ) : null}
+
+        {sentToast ? (
+          <div className="fixed bottom-20 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl border border-emerald-500/20 bg-[#131820] px-4 py-3 shadow-2xl anim-slide-up md:bottom-8">
+            <CheckCircle2 size={16} className="flex-shrink-0 text-emerald-400" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-medium text-[#e2e4e9]">Reply sent</p>
+              <p className="truncate text-[11px] text-[#4a4f5c]">{sentToast.subject}</p>
+            </div>
+            <button
+              onClick={() => setSentToast(null)}
+              className="flex-shrink-0 text-[#3a3f4c] hover:text-[#8b8f9a]"
+            >
+              ×
+            </button>
           </div>
         ) : null}
 

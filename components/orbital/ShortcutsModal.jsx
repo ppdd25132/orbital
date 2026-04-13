@@ -16,6 +16,7 @@ const GROUPS = [
     label: "Actions",
     shortcuts: [
       { keys: ["R"], description: "Reply to thread" },
+      { keys: ["F"], description: "Forward thread" },
       { keys: ["C"], description: "Compose new email" },
       { keys: ["E"], description: "Archive thread" },
       { keys: ["S"], description: "Star / unstar thread" },

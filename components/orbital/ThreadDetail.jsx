@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   BellOff,
   Check,
+  ChevronDown,
+  Forward,
   MoreHorizontal,
   Star,
 } from "lucide-react";
@@ -14,6 +16,7 @@ import SnoozeMenu from "./SnoozeMenu";
 import EmailBody from "./EmailBody";
 import QuickReplies from "./QuickReplies";
 import ReplyBox from "./ReplyBox";
+import ThreadSummary from "./ThreadSummary";
 import { Avatar, Spinner, StatusBadge } from "./shared";
 import PanelErrorBoundary from "./ErrorBoundary";
 
@@ -24,6 +27,7 @@ export default function ThreadDetail({
   onStatusChange,
   onToggleStar,
   onSnooze,
+  onForward,
   isMobile,
   isDemo,
   isOnline = true,
@@ -31,10 +35,15 @@ export default function ThreadDetail({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [showAllMessages, setShowAllMessages] = useState(false);
   const menuRef = useRef(null);
   const snoozeRef = useRef(null);
   const account = accounts.find((item) => item.id === thread.accountId);
   const accountEmails = accounts.map((item) => item.email);
+
+  useEffect(() => {
+    setShowAllMessages(false);
+  }, [thread.id]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -94,6 +103,19 @@ export default function ThreadDetail({
               }
             />
           </button>
+
+          {onForward ? (
+            <button
+              onClick={() => onForward(thread)}
+              className="flex h-11 w-11 items-center justify-center rounded-xl transition-colors hover:bg-[#16181f]"
+              title="Forward"
+            >
+              <Forward
+                size={15}
+                className="text-[#3a3f4c] hover:text-[#6b7280]"
+              />
+            </button>
+          ) : null}
 
           <div ref={snoozeRef} className="relative">
             <button
@@ -174,9 +196,11 @@ export default function ThreadDetail({
         <StatusBadge status={thread.status} size="xs" />
       </div>
 
-      <div className="flex-1 space-y-6 overflow-y-auto px-4 py-5">
+      <div className="flex-1 space-y-6 overflow-y-auto py-5">
+        <ThreadSummary thread={thread} accounts={accounts} isOnline={isOnline} />
+
         {thread._loadingFull ? (
-          <div className="space-y-3 pb-2">
+          <div className="space-y-3 px-4 pb-2">
             <div className="flex items-center gap-2.5 text-[12px] text-[#4a4f5c]">
               <Spinner size={13} />
               <span>Loading full messages…</span>
@@ -189,7 +213,20 @@ export default function ThreadDetail({
           </div>
         ) : null}
 
-        {thread.messages.map((message) => {
+        {/* Collapse older messages in long threads */}
+        {!showAllMessages && thread.messages.length > 3 ? (
+          <div className="px-4">
+            <button
+              onClick={() => setShowAllMessages(true)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1e2028] bg-[#14161e] py-2.5 text-[12px] font-medium text-[#5c6270] transition-colors hover:border-[#2a2d38] hover:bg-[#1a1d25] hover:text-[#8b8f9a]"
+            >
+              <ChevronDown size={13} />
+              Show {thread.messages.length - 2} older messages
+            </button>
+          </div>
+        ) : null}
+
+        {(showAllMessages ? thread.messages : thread.messages.length > 3 ? thread.messages.slice(-2) : thread.messages).map((message) => {
           const isMe = accountEmails.includes(message.from.email);
           const avatarColor = isMe
             ? account?.color || "#5B8EF8"
@@ -202,7 +239,7 @@ export default function ThreadDetail({
           return (
             <div
               key={message.id}
-              className={`flex gap-3 anim-fade ${isMe ? "flex-row-reverse" : ""}`}
+              className={`flex gap-3 px-4 anim-fade ${isMe ? "flex-row-reverse" : ""}`}
             >
               <Avatar name={message.from.name} size={30} color={avatarColor} />
               <div

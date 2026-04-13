@@ -39,6 +39,19 @@ Rules:
 Example: ["Sounds good, let's proceed with that approach.","Could we schedule a quick call to discuss the details?","Thanks for the update — I'll review and circle back by EOD."]`;
 }
 
+function buildSummaryPrompt(userName, userEmail) {
+  return `You are an executive briefing assistant for ${userName || "the user"} <${userEmail || ""}>.
+
+Summarize this email thread in 1-2 crisp sentences for a busy executive.
+
+Rules:
+- Lead with the key decision or action needed from ${userName?.split(" ")[0] || "you"}.
+- If no action needed, lead with the key information or update.
+- Mention deadlines or urgency if present.
+- Keep it under 40 words.
+- Return ONLY the summary. No labels, no "Summary:", no quotes.`;
+}
+
 function buildThreadHistory(threadMessages) {
   return threadMessages
     .map((m, i) => {
@@ -70,17 +83,24 @@ export async function POST(request) {
   let systemPrompt;
   let claudeMessages;
   const isSuggestions = mode === 'suggestions';
+  const isSummary = mode === 'summary';
 
   if (threadMessages && Array.isArray(threadMessages) && threadMessages.length > 0) {
-    systemPrompt = isSuggestions
-      ? buildSuggestionsPrompt(userName, userEmail)
-      : buildSystemPrompt(userName, userEmail, tone || 'professional');
+    if (isSummary) {
+      systemPrompt = buildSummaryPrompt(userName, userEmail);
+    } else if (isSuggestions) {
+      systemPrompt = buildSuggestionsPrompt(userName, userEmail);
+    } else {
+      systemPrompt = buildSystemPrompt(userName, userEmail, tone || 'professional');
+    }
     const history = buildThreadHistory(threadMessages);
     const lastMsg = threadMessages[threadMessages.length - 1];
     claudeMessages = [
       {
         role: 'user',
-        content: `Here is the full email thread:\n\n${history}\n\nYou are replying to the last message from ${lastMsg.from.name}.${isSuggestions ? ' Generate 3 short reply options as a JSON array.' : ' Write the reply now.'}`,
+        content: isSummary
+          ? `Here is the full email thread:\n\n${history}\n\nSummarize this thread.`
+          : `Here is the full email thread:\n\n${history}\n\nYou are replying to the last message from ${lastMsg.from.name}.${isSuggestions ? ' Generate 3 short reply options as a JSON array.' : ' Write the reply now.'}`,
       },
     ];
   } else if (messages && Array.isArray(messages) && messages.length > 0) {
@@ -100,8 +120,8 @@ export async function POST(request) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: isSuggestions ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-5',
-        max_tokens: isSuggestions ? 300 : 1024,
+        model: (isSuggestions || isSummary) ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-5',
+        max_tokens: isSummary ? 150 : isSuggestions ? 300 : 1024,
         system: systemPrompt,
         messages: claudeMessages,
       }),
@@ -115,6 +135,12 @@ export async function POST(request) {
         { error: data.error?.message || 'Draft generation failed' },
         { status: response.status }
       );
+    }
+
+    // For summary mode, extract text and return as { summary }
+    if (isSummary) {
+      const text = data.content?.map((b) => b.text || '').join('') || '';
+      return Response.json({ summary: text });
     }
 
     // For suggestions mode, parse the JSON array from the response text
