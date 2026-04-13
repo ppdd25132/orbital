@@ -79,6 +79,7 @@ export default function Orbital() {
   const composeOpen = Boolean(composeDraft);
   const isDemoRef = useRef(false);
   const classifyRunRef = useRef(0);
+  const lastRefreshRef = useRef(0);
 
   useEffect(() => {
     isDemoRef.current = isDemo;
@@ -178,6 +179,7 @@ export default function Orbital() {
   async function refreshInbox() {
     if (!session?.access_token) return;
 
+    lastRefreshRef.current = Date.now();
     setLoading(true);
     setGmailError(null);
 
@@ -321,6 +323,21 @@ export default function Orbital() {
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  // Refresh inbox when the user returns to the tab, throttled to 2 min.
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState !== "visible") return;
+      if (isDemoRef.current) return;
+      if (!session?.access_token) return;
+      const TWO_MIN = 2 * 60 * 1000;
+      if (Date.now() - lastRefreshRef.current < TWO_MIN) return;
+      void refreshInbox();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [session?.access_token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     function checkTimedItems() {
@@ -810,6 +827,11 @@ export default function Orbital() {
         return;
       }
 
+      if (event.key === "j" && !activeId && keyboardThreads.length > 0) {
+        void handleSelect(keyboardThreads[0]);
+        return;
+      }
+
       if (!activeId) return;
 
       if (event.key === "r") {
@@ -864,9 +886,13 @@ export default function Orbital() {
               session={session}
               snoozedCount={snoozedThreads.length}
               scheduledCount={
-                scheduledMessages.filter((message) => message.status === "pending")
-                  .length
+                scheduledMessages.filter((message) => message.status === "pending").length
               }
+              threadCounts={{
+                needs_response: displayedThreads.filter((t) => t.status === "needs_response").length,
+                waiting: displayedThreads.filter((t) => t.status === "waiting").length,
+                starred: displayedThreads.filter((t) => t.starred).length,
+              }}
             />
           </div>
 

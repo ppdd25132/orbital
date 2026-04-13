@@ -26,6 +26,8 @@ export default function ComposeModal({
 }) {
   const defaultAccountId = initialAccountId || accounts[0]?.id || "";
   const [to, setTo] = useState(initialTo);
+  const [cc, setCc] = useState("");
+  const [ccVisible, setCcVisible] = useState(false);
   const [subject, setSubject] = useState(initialSubject);
   const [body, setBody] = useState(initialBody);
   const [accountId, setAccountId] = useState(defaultAccountId);
@@ -66,6 +68,7 @@ export default function ComposeModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to,
+          cc: cc.trim() || undefined,
           subject,
           body,
           fromEmail: account?.email,
@@ -175,7 +178,32 @@ export default function ComposeModal({
                   placeholder="recipient@example.com"
                   className="flex-1 bg-transparent text-[13px] text-[#c8ccd4] placeholder-[#2e3240] focus:outline-none"
                 />
+                {!ccVisible ? (
+                  <button
+                    onClick={() => setCcVisible(true)}
+                    className="flex-shrink-0 text-[11px] font-medium text-[#3a3f4c] transition-colors hover:text-[#5c6270]"
+                  >
+                    CC
+                  </button>
+                ) : null}
               </div>
+
+              {ccVisible ? (
+                <div className="flex items-center gap-3 border-b border-[#171920] px-5 py-3">
+                  <span className="w-10 flex-shrink-0 text-[11px] font-medium text-[#3a3f4c]">
+                    CC
+                  </span>
+                  <input
+                    type="email"
+                    multiple
+                    value={cc}
+                    onChange={(event) => setCc(event.target.value)}
+                    placeholder="cc@example.com"
+                    autoFocus
+                    className="flex-1 bg-transparent text-[13px] text-[#c8ccd4] placeholder-[#2e3240] focus:outline-none"
+                  />
+                </div>
+              ) : null}
 
               <div className="flex items-center gap-3 border-b border-[#171920] px-5 py-3">
                 <span className="w-10 flex-shrink-0 text-[11px] font-medium text-[#3a3f4c]">

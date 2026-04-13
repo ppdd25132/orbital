@@ -17,10 +17,12 @@ export default function Sidebar({
   session,
   snoozedCount,
   scheduledCount,
+  threadCounts = {},
 }) {
   const counts = {
     snoozed: snoozedCount,
     scheduled: scheduledCount,
+    ...threadCounts,
   };
 
   return (

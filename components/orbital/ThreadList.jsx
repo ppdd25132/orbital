@@ -325,6 +325,13 @@ export default function ThreadListPanel({
   onClearSearch,
   isClassifying = false,
 }) {
+  const chipCounts = {
+    needs_response: threads.filter((t) => t.status === "needs_response").length,
+    waiting: threads.filter((t) => t.status === "waiting").length,
+    resolved: threads.filter((t) => t.status === "resolved").length,
+    starred: threads.filter((t) => t.starred).length,
+  };
+
   const chips = [
     { id: "all", label: "All" },
     { id: "needs_response", label: "Reply" },
@@ -499,19 +506,31 @@ export default function ThreadListPanel({
                 AI on
               </span>
             ) : null}
-            {chips.map(({ id, label }) => (
-              <button
-                key={id}
-                onClick={() => onSetFilter(id)}
-                className={`flex-shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                  filter === id
-                    ? "border-blue-500/25 bg-[#1a2a4a] text-[#5B8EF8]"
-                    : "border-transparent text-[#3a3f4c] hover:text-[#6b7280]"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            {chips.map(({ id, label }) => {
+              const count = chipCounts[id] || 0;
+              return (
+                <button
+                  key={id}
+                  onClick={() => onSetFilter(id)}
+                  className={`flex-shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    filter === id
+                      ? "border-blue-500/25 bg-[#1a2a4a] text-[#5B8EF8]"
+                      : "border-transparent text-[#3a3f4c] hover:text-[#6b7280]"
+                  }`}
+                >
+                  {label}
+                  {count > 0 ? (
+                    <span
+                      className={`ml-1 rounded-full px-1 text-[9px] font-bold ${
+                        filter === id ? "bg-blue-500/20 text-[#5B8EF8]" : "bg-[#1e2028] text-[#4a4f5c]"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
