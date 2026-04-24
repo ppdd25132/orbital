@@ -4,6 +4,7 @@ import {
   getLinkedAccounts,
   setLinkedAccountsCookie,
 } from '@/lib/linked-accounts';
+import { upsertConnectedAccount, auditLog } from '@/lib/orbital-store';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -73,6 +74,18 @@ export async function GET(request) {
   } else {
     linked.push(entry);
   }
+
+  await upsertConnectedAccount(stateData.primaryEmail, entry)
+    .then((account) =>
+      auditLog({
+        userEmail: stateData.primaryEmail,
+        action: 'gmail_account_linked',
+        targetType: 'connected_account',
+        targetId: account.id,
+        metadata: { accountEmail: userInfo.email },
+      })
+    )
+    .catch(() => {});
 
   const response = NextResponse.redirect(new URL('/?linked=1', request.url));
   setLinkedAccountsCookie(response, linked);

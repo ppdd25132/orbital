@@ -39,9 +39,9 @@ self.addEventListener('fetch', (event) => {
   // Skip next-auth and other auth routes — never cache these
   if (url.pathname.startsWith('/api/auth')) return;
 
-  // API calls (e.g. /api/gmail/*): network-first, cache as fallback
+  // API calls may contain private email data and must never be cached.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirst(event.request));
+    event.respondWith(networkOnly(event.request));
     return;
   }
 
@@ -72,6 +72,17 @@ async function networkFirst(request) {
       if (root) return root;
     }
     // For API calls, return a structured offline response
+    return new Response(JSON.stringify({ error: 'offline' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+async function networkOnly(request) {
+  try {
+    return await fetch(request.clone());
+  } catch {
     return new Response(JSON.stringify({ error: 'offline' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },

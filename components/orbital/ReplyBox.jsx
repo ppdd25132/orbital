@@ -1,18 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, CornerDownRight, Send, Sparkles, X } from "lucide-react";
+import { CheckCircle2, CornerDownRight, Send, Sparkles, X } from "lucide-react";
 import { AIDraftSkeleton, InlineError, Spinner } from "./shared";
 
 async function generateDraft(thread, accounts, tone = "professional") {
   const account = accounts.find((item) => item.id === thread.accountId);
+  const lastMessage = thread.messages[thread.messages.length - 1];
 
   try {
-    const response = await fetch("/api/draft", {
+    const response = await fetch("/api/ai/draft-response", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        threadId: thread.id,
+        accountEmail: account?.email || "",
+        to: lastMessage?.from?.email || "",
+        subject: `Re: ${thread.subject}`,
+        replyToMessageId: lastMessage?.id || null,
         threadMessages: thread.messages.map((message) => ({
+          id: message.id,
+          threadId: thread.id,
           from: {
             name: message.from.name,
             email: message.from.email,
@@ -28,15 +36,18 @@ async function generateDraft(thread, accounts, tone = "professional") {
 
     const data = await response.json();
     if (!response.ok) {
-      return data.error || "Draft generation unavailable. Please compose manually.";
+      throw new Error(data.error || "Draft generation unavailable. Please compose manually.");
     }
 
-    return (
-      data.content?.map((block) => block.text || "").join("") ||
-      "Unable to generate draft."
-    );
-  } catch {
-    return "Draft generation unavailable. Please compose manually.";
+    return {
+      body: data.draft || "Unable to generate draft.",
+      draftId: data.draftId,
+      rationale: data.rationale || "",
+      sourceRefs: data.sourceRefs || [],
+      approvalRequired: Boolean(data.approvalRequired),
+    };
+  } catch (error) {
+    throw new Error(error.message || "Draft generation unavailable. Please compose manually.");
   }
 }
 
@@ -54,6 +65,9 @@ export default function ReplyBox({
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
   const [aiUsed, setAiUsed] = useState(false);
+  const [draftId, setDraftId] = useState(null);
+  const [draftRationale, setDraftRationale] = useState("");
+  const [draftSourceRefs, setDraftSourceRefs] = useState([]);
   const [tone, setTone] = useState("professional");
   const textareaRef = useRef(null);
 
@@ -71,6 +85,9 @@ export default function ReplyBox({
     setSent(false);
     setError(null);
     setAiUsed(false);
+    setDraftId(null);
+    setDraftRationale("");
+    setDraftSourceRefs([]);
     setTone("professional");
   }, [thread.id]);
 
@@ -98,10 +115,22 @@ export default function ReplyBox({
     setAiUsed(true);
     setError(null);
 
-    const draft = await generateDraft(thread, accounts, tone);
-    setBody(draft);
-    setDrafting(false);
-    window.setTimeout(() => textareaRef.current?.focus(), 50);
+    try {
+      const draft = await generateDraft(thread, accounts, tone);
+      setBody(draft.body);
+      setDraftId(draft.draftId);
+      setDraftRationale(draft.rationale);
+      setDraftSourceRefs(draft.sourceRefs);
+      window.setTimeout(() => textareaRef.current?.focus(), 50);
+    } catch (draftError) {
+      setError(draftError.message);
+      setAiUsed(false);
+      setDraftId(null);
+      setDraftRationale("");
+      setDraftSourceRefs([]);
+    } finally {
+      setDrafting(false);
+    }
   }
 
   async function handleSend() {
@@ -120,17 +149,44 @@ export default function ReplyBox({
     setError(null);
 
     try {
-      const response = await fetch("/api/gmail/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: replyTo,
-          subject: `Re: ${thread.subject}`,
-          body,
-          replyToMessageId: lastMessage?.id,
-          fromEmail: account?.email,
-        }),
-      });
+      let response;
+
+      if (aiUsed && draftId) {
+        const approvalResponse = await fetch("/api/approvals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetType: "draft_response",
+            targetId: draftId,
+            decision: "approved",
+            editedPayload: { body },
+            notes: "Approved in Orbital ReplyBox",
+          }),
+        });
+
+        if (!approvalResponse.ok) {
+          const data = await approvalResponse.json().catch(() => ({}));
+          throw new Error(data.error || `Approval failed (${approvalResponse.status})`);
+        }
+
+        response = await fetch("/api/gmail/send-approved", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ draftId }),
+        });
+      } else {
+        response = await fetch("/api/gmail/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: replyTo,
+            subject: `Re: ${thread.subject}`,
+            body,
+            replyToMessageId: lastMessage?.id,
+            fromEmail: account?.email,
+          }),
+        });
+      }
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -139,6 +195,9 @@ export default function ReplyBox({
 
       setSent(true);
       setBody("");
+      setDraftId(null);
+      setDraftRationale("");
+      setDraftSourceRefs([]);
       setOpen(false);
       onSendSuccess?.({ body, status: "waiting" });
       window.setTimeout(() => setSent(false), 2500);
@@ -198,6 +257,9 @@ export default function ReplyBox({
             setBody("");
             setError(null);
             setAiUsed(false);
+            setDraftId(null);
+            setDraftRationale("");
+            setDraftSourceRefs([]);
           }}
           className="flex h-7 w-7 items-center justify-center rounded hover:bg-[#1e2028] text-[#3a3f4c] transition-colors hover:text-[#8b8f9a]"
         >
@@ -227,6 +289,20 @@ export default function ReplyBox({
                   : undefined
               }
             />
+          ) : null}
+          {aiUsed && draftId ? (
+            <div className="mx-4 mb-3 rounded-xl border border-blue-500/15 bg-blue-500/[0.07] px-3 py-2 text-[11px] leading-relaxed text-[#7f96c9]">
+              <div className="mb-1 flex items-center gap-1.5 font-semibold text-[#8db2ff]">
+                <Sparkles size={11} />
+                Approval required before send
+              </div>
+              {draftRationale ? <p>{draftRationale}</p> : null}
+              {draftSourceRefs.length ? (
+                <p className="mt-1 text-[#5f6f91]">
+                  Cites {draftSourceRefs.length} source message{draftSourceRefs.length === 1 ? "" : "s"}.
+                </p>
+              ) : null}
+            </div>
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#1a1c22] px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -261,7 +337,7 @@ export default function ReplyBox({
               className="flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#5B8EF8] px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#4a7def] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {sending ? <Spinner size={13} /> : <Send size={12} />}
-              {sending ? "Sending…" : "Send"}
+              {sending ? "Sending…" : aiUsed && draftId ? "Approve & Send" : "Send"}
             </button>
           </div>
         </>

@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { NextResponse } from 'next/server';
 import { getLinkedAccounts, setLinkedAccountsCookie } from '@/lib/linked-accounts';
+import { deleteConnectedAccount, listConnectedAccounts } from '@/lib/orbital-store';
 
 export async function GET(request) {
   const session = await getServerSession(authOptions);
@@ -9,7 +10,8 @@ export async function GET(request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const linked = getLinkedAccounts(request);
+  const dbAccounts = await listConnectedAccounts(session.user.email).catch(() => []);
+  const linked = dbAccounts.length ? dbAccounts : getLinkedAccounts(request);
   return NextResponse.json({
     accounts: linked.map((a) => ({ email: a.email, name: a.name })),
   });
@@ -34,6 +36,7 @@ export async function DELETE(request) {
   }
 
   const linked = getLinkedAccounts(request).filter((a) => a.email !== email);
+  await deleteConnectedAccount(session.user.email, email).catch(() => {});
   const response = NextResponse.json({ ok: true });
   setLinkedAccountsCookie(response, linked);
   return response;

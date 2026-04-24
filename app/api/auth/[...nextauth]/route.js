@@ -1,5 +1,6 @@
 import NextAuth from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
+import { auditLog, upsertConnectedAccount } from '@/lib/orbital-store';
 
 export const authOptions = {
   providers: [
@@ -29,6 +30,25 @@ export const authOptions = {
         token.access_token = account.access_token;
         token.refresh_token = account.refresh_token;
         token.expires_at = account.expires_at;
+        if (token.email && account.access_token) {
+          await upsertConnectedAccount(token.email, {
+            email: token.email,
+            name: token.name || token.email,
+            access_token: account.access_token,
+            refresh_token: account.refresh_token || null,
+            token_expiry: account.expires_at || null,
+          })
+            .then((saved) =>
+              auditLog({
+                userEmail: token.email,
+                action: 'primary_gmail_token_saved',
+                targetType: 'connected_account',
+                targetId: saved.id,
+                metadata: { accountEmail: token.email },
+              })
+            )
+            .catch(() => {});
+        }
         return token;
       }
 
@@ -76,7 +96,6 @@ export const authOptions = {
     },
     async session({ session, token }) {
       session.access_token = token.access_token;
-      session.refresh_token = token.refresh_token;
       session.expires_at = token.expires_at;
       session.error = token.error;
       return session;

@@ -1,5 +1,6 @@
 // app/api/draft/route.js
 // Proxies AI draft requests to Claude API, keeping the API key server-side
+import { requireSession, parseLimitedJson, jsonError } from "@/lib/api-guard";
 
 const TONE_INSTRUCTIONS = {
   professional: "professional and polished — use complete sentences, a warm greeting, and a formal closing",
@@ -33,11 +34,17 @@ function buildThreadHistory(threadMessages) {
 }
 
 export async function POST(request) {
+  try {
+    await requireSession();
+  } catch (error) {
+    return jsonError(error, "Unauthorized");
+  }
+
   let body;
   try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    body = await parseLimitedJson(request);
+  } catch (error) {
+    return jsonError(error, "Invalid JSON body");
   }
 
   // Support both the new structured format and the legacy system/messages format

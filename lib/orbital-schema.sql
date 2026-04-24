@@ -1,0 +1,3 @@
+-- P-038 Orbital communication console schema.
+-- Runtime source of truth lives in lib/orbital-schema.js so Next.js can bundle it.
+-- Keep this file aligned with ORBITAL_SCHEMA_SQL when editing migrations by hand.
