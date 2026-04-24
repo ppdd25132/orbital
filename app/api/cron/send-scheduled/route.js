@@ -9,6 +9,7 @@ import {
 import { refreshTokenIfNeeded } from "@/lib/linked-accounts";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function cronAuthorized(request) {
   const secret = process.env.CRON_SECRET;
@@ -65,4 +66,8 @@ export async function POST(request) {
   }
 
   return Response.json({ processed: results.length, results });
+}
+
+export async function GET(request) {
+  return POST(request);
 }
