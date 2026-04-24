@@ -168,7 +168,7 @@ export default function Orbital() {
   }
 
   async function refreshInbox() {
-    if (!session?.access_token) return;
+    if (!session?.user?.email) return;
 
     setLoading(true);
     setGmailError(null);
@@ -273,7 +273,7 @@ export default function Orbital() {
       return;
     }
 
-    if (authStatus === "authenticated" && session?.access_token) {
+    if (authStatus === "authenticated" && session?.user?.email) {
       setIsDemo(false);
       setShowSignIn(false);
       void refreshInbox();
@@ -287,7 +287,6 @@ export default function Orbital() {
     }
   }, [
     authStatus,
-    session?.access_token,
     session?.error,
     session?.user?.email,
     session?.user?.name,

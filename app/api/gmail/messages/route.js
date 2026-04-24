@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { NextResponse } from 'next/server';
-import { getLinkedAccounts, refreshTokenIfNeeded } from '@/lib/linked-accounts';
+import { listLinkedGmailAccounts, resolveGmailAccessToken } from '@/lib/gmail-auth';
 
 async function fetchMessagesForAccount(token, accountEmail, maxResults) {
   const listRes = await fetch(
@@ -44,7 +44,7 @@ async function fetchMessagesForAccount(token, accountEmail, maxResults) {
 export async function GET(request) {
   const session = await getServerSession(authOptions);
 
-  if (!session?.access_token) {
+  if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -54,20 +54,21 @@ export async function GET(request) {
   try {
     // Primary account
     const primaryEmail = session.user?.email || 'primary';
+    const primaryToken = await resolveGmailAccessToken(request, session, primaryEmail);
     const primaryMessages = await fetchMessagesForAccount(
-      session.access_token,
+      primaryToken,
       primaryEmail,
       maxResults
     );
 
     // Linked accounts — refresh tokens if needed, fetch in parallel
-    const rawLinked = getLinkedAccounts(request);
+    const rawLinked = await listLinkedGmailAccounts(request, session);
     const linkedMessages = await Promise.all(
       rawLinked.map(async (acc) => {
-        const refreshed = await refreshTokenIfNeeded(acc);
+        const token = await resolveGmailAccessToken(request, session, acc.email);
         return fetchMessagesForAccount(
-          refreshed.access_token,
-          refreshed.email,
+          token,
+          acc.email,
           Math.ceil(maxResults / 2)
         );
       })

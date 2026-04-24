@@ -1,12 +1,12 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { sendMessage } from '@/lib/gmail';
-import { getLinkedAccounts, refreshTokenIfNeeded } from '@/lib/linked-accounts';
+import { resolveGmailAccessToken } from '@/lib/gmail-auth';
 
 export async function POST(request) {
   const session = await getServerSession(authOptions);
 
-  if (!session?.access_token) {
+  if (!session?.user?.email) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -26,18 +26,8 @@ export async function POST(request) {
     );
   }
 
-  let token = session.access_token;
-
-  if (fromEmail && fromEmail !== session.user?.email) {
-    const linked = getLinkedAccounts(request);
-    const acc = linked.find((a) => a.email === fromEmail);
-    if (acc) {
-      const refreshed = await refreshTokenIfNeeded(acc);
-      token = refreshed.access_token;
-    }
-  }
-
   try {
+    const token = await resolveGmailAccessToken(request, session, fromEmail || session.user.email);
     const result = await sendMessage(token, {
       to,
       subject,

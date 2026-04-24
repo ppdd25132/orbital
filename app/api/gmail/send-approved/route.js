@@ -1,9 +1,8 @@
 import { requireSession, parseLimitedJson, jsonError } from "@/lib/api-guard";
+import { resolveGmailAccessToken } from "@/lib/gmail-auth";
 import { sendMessage } from "@/lib/gmail";
-import { getLinkedAccounts, refreshTokenIfNeeded } from "@/lib/linked-accounts";
 import {
   auditLog,
-  getConnectedAccountToken,
   getDraftForUser,
   requireApprovedTarget,
   updateDraftBodyAndStatus,
@@ -12,26 +11,7 @@ import {
 export const runtime = "nodejs";
 
 async function tokenForDraft(request, session, draft) {
-  const accountEmail = draft.account_email;
-  const userEmail = session.user?.email;
-
-  if (accountEmail && accountEmail !== userEmail) {
-    const dbToken = await getConnectedAccountToken(userEmail, accountEmail).catch(() => null);
-    if (dbToken?.access_token) {
-      return (await refreshTokenIfNeeded({ email: accountEmail, ...dbToken })).access_token;
-    }
-
-    const linked = getLinkedAccounts(request);
-    const account = linked.find((item) => item.email === accountEmail);
-    if (account) {
-      return (await refreshTokenIfNeeded(account)).access_token;
-    }
-  }
-
-  if (session.access_token) return session.access_token;
-
-  const primaryToken = await getConnectedAccountToken(userEmail, userEmail).catch(() => null);
-  return primaryToken?.access_token || null;
+  return resolveGmailAccessToken(request, session, draft.account_email || session.user?.email);
 }
 
 export async function POST(request) {

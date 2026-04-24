@@ -95,7 +95,7 @@ export const authOptions = {
       }
     },
     async session({ session, token }) {
-      session.access_token = token.access_token;
+      session.hasGmailAccess = Boolean(token.access_token);
       session.expires_at = token.expires_at;
       session.error = token.error;
       return session;

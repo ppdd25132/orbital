@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { NextResponse } from 'next/server';
-import { getLinkedAccounts, refreshTokenIfNeeded } from '@/lib/linked-accounts';
+import { listLinkedGmailAccounts, resolveGmailAccessToken } from '@/lib/gmail-auth';
 
 async function convertToGmailQuery(naturalQuery) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -78,7 +78,7 @@ async function searchMessagesForAccount(token, accountEmail, query, maxResults) 
 export async function GET(request) {
   const session = await getServerSession(authOptions);
 
-  if (!session?.access_token) {
+  if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -104,16 +104,17 @@ export async function GET(request) {
     }
 
     const primaryEmail = session.user?.email || 'primary';
-    const rawLinked = getLinkedAccounts(request);
+    const primaryToken = await resolveGmailAccessToken(request, session, primaryEmail);
+    const rawLinked = await listLinkedGmailAccounts(request, session);
 
     async function searchAcrossAccounts(query) {
       const [primaryMessages, ...linkedResults] = await Promise.all([
-        searchMessagesForAccount(session.access_token, primaryEmail, query, maxResults),
+        searchMessagesForAccount(primaryToken, primaryEmail, query, maxResults),
         ...rawLinked.map(async (acc) => {
-          const refreshed = await refreshTokenIfNeeded(acc);
+          const token = await resolveGmailAccessToken(request, session, acc.email);
           return searchMessagesForAccount(
-            refreshed.access_token,
-            refreshed.email,
+            token,
+            acc.email,
             query,
             Math.ceil(maxResults / 2)
           );

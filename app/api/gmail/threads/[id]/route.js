@@ -1,27 +1,16 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { getThread, modifyThread } from '@/lib/gmail';
-import { getLinkedAccounts, refreshTokenIfNeeded } from '@/lib/linked-accounts';
+import { resolveGmailAccessToken } from '@/lib/gmail-auth';
 
 async function resolveAccessToken(request, session, accountEmail) {
-  if (!accountEmail || accountEmail === session.user?.email) {
-    return session.access_token;
-  }
-
-  const linked = getLinkedAccounts(request);
-  const account = linked.find((entry) => entry.email === accountEmail);
-  if (!account) {
-    throw new Error('Linked account not found');
-  }
-
-  const refreshed = await refreshTokenIfNeeded(account);
-  return refreshed.access_token;
+  return resolveGmailAccessToken(request, session, accountEmail || session.user?.email);
 }
 
 export async function GET(request, { params }) {
   const session = await getServerSession(authOptions);
 
-  if (!session?.access_token) {
+  if (!session?.user?.email) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -46,7 +35,7 @@ export async function GET(request, { params }) {
 export async function PATCH(request, { params }) {
   const session = await getServerSession(authOptions);
 
-  if (!session?.access_token) {
+  if (!session?.user?.email) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
